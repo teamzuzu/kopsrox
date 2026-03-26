@@ -212,8 +212,11 @@ sudo virt-customize -a {cloud_image} \
 --mkdir /etc/rancher/k3s \
 --upload {kopsrox_yaml}:/var/lib/rancher/k3s/server/manifests/ \
 --upload {k3s_server_file}:/etc/rancher/k3s/ \
+--run-command 'sed -i "s/GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX=\"ipv6.disable=1\"/" /etc/default/grub' \
+--run-command 'update-grub' \
 --copy-in ./lib/scripts:/root \
 > virt-customize.log 2>&1'''
+  print(virtc_cmd)
   local_exec(virtc_cmd)
 
   # destroy template if it exists
