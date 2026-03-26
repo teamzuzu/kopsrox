@@ -177,7 +177,11 @@ fi
   # generate a k3s server config file
   k3s_server_config = f'''\
 disable-cloud-controller: true
-tls-san: {network_ip}
+tls-san:
+  - {network_ip}
+  - {vmip(masterid)}
+  - {vmip(masterid + 1)}
+  - {vmip(masterid + 2)}
 write-kubeconfig-mode: 0644
 embedded-registry: true
 disable:
