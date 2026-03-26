@@ -1,6 +1,6 @@
 # kopsrox FAQ
 
-:question:  __can I migrate the kopsrox vms to other hosts in my proxmox cluster?__
+:question: __can I migrate the kopsrox vms to other hosts in my proxmox cluster?__
 
 It is mostly supported but a bit untested at the moment
 
@@ -19,3 +19,7 @@ got this running v1.26.10+k3s2 with cloudflare - upgrading to v1.27.8+k3s2 resol
 :question: __how to re-add master-m1?__
 
 uninstall k3s then run the node command to re add as a slave - if the m1 node was the vip master you will need to manually logon and remove the VIP ip from eth0
+
+:question: ipv6?
+
+I had to disable this in the image create script

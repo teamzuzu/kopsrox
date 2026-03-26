@@ -216,7 +216,6 @@ sudo virt-customize -a {cloud_image} \
 --run-command 'update-grub' \
 --copy-in ./lib/scripts:/root \
 > virt-customize.log 2>&1'''
-  print(virtc_cmd)
   local_exec(virtc_cmd)
 
   # destroy template if it exists
