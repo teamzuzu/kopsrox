@@ -252,7 +252,7 @@ created: {img_ts}'''
     tags = cluster_name,
     serial0 = 'socket',
     agent = ('enabled=true'),
-    hotplug = 0,
+    hotplug = 'disk',
     ciupgrade = 0,
     description = image_desc,
     ciuser = cloudinituser,
