@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kopsrox-test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kopsrox-test
+spec:
+  containers:
+    - args:
+        - '300'
+      command:
+        - /bin/sleep
+      image: ghcr.io/teamzuzu/zuzu-devops:main
+      imagePullPolicy: Always
+      name: kopsrox-test
+      volumeMounts:
+        - mountPath: /data
+          name: kopsrox-test
+  restartPolicy: Always
+  volumes:
+    - name: kopsrox-test
+      persistentVolumeClaim:
+        claimName: kopsrox-test
