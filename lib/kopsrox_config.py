@@ -15,6 +15,7 @@ from kopsrox_kmsg import kmsg
 from configparser import ConfigParser
 kopsrox_config = ConfigParser()
 kopsrox_config.read('kopsrox.ini')
+config = ({s:dict(kopsrox_config.items(s)) for s in kopsrox_config.sections()})
 
 # kname
 kname='config_check'
@@ -211,9 +212,6 @@ bucket = conf_check('s3_bucket')
 region_string = ''
 if region:
   region_string = region
-
-# dict of all config items - legacy support
-config = ({s:dict(kopsrox_config.items(s)) for s in kopsrox_config.sections()})
 
 # define vmnames
 suffixes = ['-i0', '-m1', '-m2', '-m3', '-u1', '-w1', '-w2', '-w3', '-w4', '-w5']

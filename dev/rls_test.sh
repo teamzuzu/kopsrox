@@ -2,7 +2,7 @@
 
 start_time=$(date +%s)
 
-# vars
+# kopsrox aliases
 CFG="kopsrox.ini"
 K="./kopsrox.py"
 KC="$K cluster"
@@ -21,8 +21,7 @@ KES="$KE snapshot"
 KER="$KE restore"
 KERL="${KER}-latest"
 
-
-# change
+# change kopsrox config item
 kc() {
   sed -i /"$1 =/c\\$1 = $2" $CFG
 }
@@ -30,10 +29,17 @@ kc() {
 # get pods
 get_pods="$KC kubectl get pods -A"
 
-# rm kubeconfig and tokend
-rm *.kubeconfig
-rm *.k3stoken
+# remove any generated files
+rm \
+lib/manifests/config.yaml \
+lib/manifests/server.yaml \
+lib/manifests/kopsrox* \
+lib/scripts/* \
+*.kubeconfig \
+*.k3stoken \
+> /dev/null 2>&1
 set -e
+
 
 echo "START"
 
@@ -41,7 +47,7 @@ echo "START"
 $KCD
 kc workers 0 ; kc masters 1
 
-# ** 1 MASTER, SNAPSHOT RESTOR
+# ** 1 MASTER, SNAPSHOT RESTORE
 # create image, create and update cluster
 ( $KIC && $KCC && $KCU ) || exit
 

@@ -23,6 +23,7 @@ if cmd == 'create':
       print()
     except:
       kmsg(f'{kname}check', f'unable to download get k3s script', 'err')
+      exit(1)
 
   # check if image already exists
   if os.path.isfile(cloud_image):
