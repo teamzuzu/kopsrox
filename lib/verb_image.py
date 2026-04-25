@@ -17,10 +17,10 @@ if cmd == 'create':
   # download k3s.sh
   get_k3s_path = './lib/scripts/k3s.sh'
   if not os.path.isfile(get_k3s_path):
-    kmsg(f'{kname}wget', f'https://get.k3s.io')
+    kmsg(f'{kname}get-k3s', f'downloading script from https://get.k3s.io...')
     try:
-      wget.download('https://get.k3s.io', get_k3s_path)
-      print()
+      dl_k3s = requests.get('https://get.k3s.io')
+      open(get_k3s_path, 'wb').write(dl_k3s.content)
     except:
       kmsg(f'{kname}check', f'unable to download get k3s script', 'err')
       exit(1)
@@ -32,7 +32,7 @@ if cmd == 'create':
       os.remove(cloud_image)
     except:
       kmsg(f'{kname}check', f'{cloud_image} cannot delete', 'err')
-      exit(0)
+      exit(1)
 
   # check img can be downloaded
   try:
@@ -41,7 +41,7 @@ if cmd == 'create':
     print()
   except:
     kmsg(f'{kname}check', f'unable to download {cloud_image_url}', 'err')
-    exit(0)
+    exit(1)
 
   # open kopsrox manifest
   kopsrox_yaml = f'./lib/manifests/kopsrox-{cluster_name}.yaml'

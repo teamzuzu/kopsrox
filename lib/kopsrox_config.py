@@ -4,6 +4,7 @@
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import urllib.parse
+import requests
 from datetime import datetime
 from proxmoxer import ProxmoxAPI
 import re,os,sys,subprocess,time,wget,base64
