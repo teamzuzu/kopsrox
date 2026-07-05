@@ -1,5 +1,7 @@
 # kopsrox
 
+- NEWS: I'm going to switch to the new micro vms supported in pve https://github.com/rcarmo/pve-microvm
+
 - kopsrox is a script to help create and manage simple ha k3s clusters on ProxmoxVE
 - use upstream cloud images imported into proxmox as templates - no iso's to mess around with
 - add more master/worker k3s nodes using a simple config file and cli interface :pray:
