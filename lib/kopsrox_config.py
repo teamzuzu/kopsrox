@@ -3,11 +3,10 @@
 # external imports
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-import urllib.parse
 import requests
 from datetime import datetime
 from proxmoxer import ProxmoxAPI
-import re,os,sys,subprocess,time,wget,base64
+import re,os,sys,subprocess,time,base64
 
 # kmsg
 from kopsrox_kmsg import kmsg
@@ -135,25 +134,21 @@ if not prox.nodes(proxmox_node).storage.get(storage = proxmox_storage):
   print(disc_storages)
 
 # image related config checks
-# cloud image
 if passed_cmd == 'image':
-  cloud_image_url = conf_check('cloud_image_url')
 
-  # deal with any extra packages aside from qemu-guest-agent
-  image_packages = 'qemu-guest-agent'
-  extra_packages = f',{conf_check('extra_packages')}'
-  if extra_packages != ',':
-    image_packages = f'{image_packages}{extra_packages}'
+  # oci image used to build the microvm template
+  oci_image = conf_check('oci_image')
 
-  # check ssh key can be encoded correctly
+  # kopsrox microvm kernel/initrd - optional overrides
+  microvm_kernel = kopsrox_config.get('kopsrox', 'microvm_kernel', fallback='/usr/share/pve-microvm/vmlinuz-kopsrox')
+  microvm_initrd = kopsrox_config.get('kopsrox', 'microvm_initrd', fallback='/usr/share/pve-microvm/initrd-kopsrox')
+
+  # template may not exist yet on image create
   try:
-    cloudinitsshkey = urllib.parse.quote(conf_check('cloudinitsshkey'), safe='')
+    template_data = prox.nodes(proxmox_node).qemu(cluster_id).config.get()
+    cloud_image_desc = template_data['description']
   except:
-    kmsg(kname, f'[kopsrox]/cloudinitsshkey - invalid ssh key', 'err')
-    exit(0)
-
-  template_data = prox.nodes(proxmox_node).qemu(cluster_id).config.get()
-  cloud_image_desc = template_data['description']
+    cloud_image_desc = ''
 
 # vm disk
 vm_disk = conf_check('vm_disk')
@@ -176,6 +171,13 @@ if vm_ram < 2:
 # cloudinit
 cloudinituser = conf_check('cloudinituser')
 cloudinitpass = conf_check('cloudinitpass')
+cloudinitsshkey = conf_check('cloudinitsshkey')
+if not cloudinitsshkey.startswith('ssh-'):
+  kmsg(kname, f'[kopsrox]/cloudinitsshkey - invalid ssh key', 'err')
+  exit(0)
+
+# extra packages installed into each node at init
+extra_packages = conf_check('extra_packages')
 
 # network
 network_ip = conf_check('network_ip')

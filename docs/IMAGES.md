@@ -1,5 +1,9 @@
-# cloud images
+# images
 
+kopsrox nodes are microvms built from OCI images via pve-microvm-template
 
-# amazon linux ( qcow ) 
-https://cdn.amazonlinux.com/al2023/os-images/2023.6.20250123.4/
+set `oci_image` in kopsrox.ini - the default is `ubuntu:24.04`
+
+other apt based images ( eg `debian:trixie-slim` ) should also work but are untested with kopsrox
+
+nodes boot the kopsrox kernel ( `/usr/share/pve-microvm/vmlinuz-kopsrox` ) built by `dev/build-kopsrox-kernel.sh` - the image only provides the userland

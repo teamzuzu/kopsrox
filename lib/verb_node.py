@@ -2,7 +2,7 @@
 
 # functions
 from kopsrox_config import *
-from kopsrox_k3s import k3s_remove_node, k3s_init_node
+from kopsrox_k3s import k3s_remove_node, k3s_init_node, cluster_info
 from kopsrox_proxmox import clone
 
 # passed command
@@ -38,7 +38,7 @@ if cmd not in ['utility']:
 
       # terminal 
       if cmd == 'terminal':
-        kmsg('node_terminal', f'u/p: {cloudinituser} / {cloudinitpass}', 'sys')
+        kmsg('node_terminal', f'root autologin on console - or u/p: {cloudinituser} / {cloudinitpass}', 'sys')
         os.system(f'sudo qm terminal {vmid}')
         exit(0)
 

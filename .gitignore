@@ -6,3 +6,4 @@ lib/__pycache__/
 *.etcd.token
 *.k3stoken
 *.kubeconfig
+kopsrox-image.log

@@ -43,11 +43,16 @@ def init_kopsrox_ini():
   config.set(ks, 'proxmox_storage', 'local-lvm')
 
   # upstream image
-  config.set(ks, '; the upstream cloud image used to create the kopsrox image')
-  config.set(ks, 'cloud_image_url', 'https://cloud-images.ubuntu.com/minimal/daily/oracular/current/oracular-minimal-cloudimg-amd64.img')
+  config.set(ks, '; the OCI image used to build the microvm template ( via pve-microvm-template )')
+  config.set(ks, 'oci_image', 'ubuntu:24.04')
+
+  # microvm kernel/initrd - optional overrides
+  config.set(ks, '; kernel/initrd used to boot kopsrox microvms - built with dev/build-kopsrox-kernel.sh')
+  config.set(ks, '# microvm_kernel', '/usr/share/pve-microvm/vmlinuz-kopsrox')
+  config.set(ks, '# microvm_initrd', '/usr/share/pve-microvm/initrd-kopsrox')
 
   # extra packages to include in image
-  config.set(ks, '; comma seperated list of extra packages to install into image ')
+  config.set(ks, '; comma seperated list of extra packages installed into each node when created ')
   config.set(ks, 'extra_packages', 'nfs-common')
 
   # disk size for kopsrox vms
@@ -62,16 +67,16 @@ def init_kopsrox_ini():
   config.set(ks, '; amount of ram in Gib ')
   config.set(ks, 'vm_ram', '2')
 
-  # cloudinit user key and password
-  config.set(ks, '; username for created cloudinit user')
+  # node user key and password
+  config.set(ks, '; username for the user created in each node ( via the guest agent )')
   config.set(ks, 'cloudinituser', 'user')
 
-  # cloud init user password
-  config.set(ks, '; password for the cloudinit user')
+  # node user password
+  config.set(ks, '; password for the created user')
   config.set(ks, 'cloudinitpass', 'admin')
 
-  # cloud init user ssh key
-  config.set(ks, '; ssh public key for the cloudinit user ( required )')
+  # node user ssh key
+  config.set(ks, '; ssh public key for the created user ( required )')
   config.set(ks, 'cloudinitsshkey', 'ssh-rsa cioieocieo')
 
   # network bridge
@@ -96,7 +101,7 @@ def init_kopsrox_ini():
   config.set(ks, 'network_dns', '192.168.0.1')
 
   # network mtu
-  config.set(ks, '; interface mtu set on vms ')
+  config.set(ks, '; interface mtu applied inside each node ')
   config.set(ks, '; set to 1450 if using sdn ')
   config.set(ks, 'network_mtu', '1500')
 

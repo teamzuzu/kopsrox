@@ -2,6 +2,7 @@
 
 # kopsrox
 from kopsrox_config import *
+from kopsrox_artifacts import kopsrox_manifest, k3s_server_config, kopsrox_sh
 
 # run a exec via qemu-agent
 def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
@@ -37,8 +38,8 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
       # increment counter
       qagent_count += 1
 
-      # exit if longer than 30 seconds
-      if qagent_count == 30:
+      # exit if longer than 120 seconds - agent can be slow on first boot
+      if qagent_count == 120:
         kmsg(kname, f'agent not responding on {vmname} [{node}] cmd: {cmd}', 'err')
         exit(0)
 
@@ -104,6 +105,178 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
     except:
       return('no output-' + cmd)
 
+# write a file into a vm via the guest agent
+def qa_write(vmid: int, remote_path: str, content: str, mode: str = '644'):
+
+  # define kname
+  kname = 'proxmox_qa_write'
+
+  # get node for vm - fallback to configured node for new clones
+  try:
+    node = vms[vmid]
+  except:
+    node = proxmox_node
+
+  # pve api file-write content limit
+  chunk_size = 40960
+
+  try:
+
+    # single write
+    if len(content) <= chunk_size:
+      prox.nodes(node).qemu(vmid).agent('file-write').post(file = remote_path, content = content)
+
+    # write chunks as part files then join
+    else:
+      chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
+      for count, chunk in enumerate(chunks):
+        prox.nodes(node).qemu(vmid).agent('file-write').post(file = f'{remote_path}.kopsrox{count:03}', content = chunk)
+      qa_exec(vmid, f'cat {remote_path}.kopsrox* > {remote_path} && rm -f {remote_path}.kopsrox*')
+
+  except:
+    kmsg(kname, f'unable to write {remote_path} to {vmnames[vmid]}', 'err')
+    exit(0)
+
+  # set permissions
+  qa_exec(vmid, f'chmod {mode} {remote_path}')
+
+# reboot a node via the agent and wait for it to return
+def node_reboot_wait(vmid: int):
+
+  # define kname
+  kname = 'proxmox_reboot'
+  vmname = vmnames[vmid]
+  kmsg(kname, f'rebooting {vmname}')
+
+  # transient timer so the exec returns before the agent goes away
+  qa_exec(vmid, 'systemd-run --on-active=1 systemctl reboot 2>/dev/null')
+
+  # wait for agent to go down
+  count = int(0)
+  while True:
+    try:
+      prox.nodes(proxmox_node).qemu(vmid).agent.ping.post()
+      count += 1
+      if count == 60:
+        kmsg(kname, f'{vmname} did not reboot', 'err')
+        exit(0)
+      time.sleep(1)
+    except:
+      break
+
+  # qa_exec waits for the agent to come back
+  qa_exec(vmid, 'uptime')
+
+# configure a newly cloned microvm via the guest agent
+# the agent runs over virtio-serial so this works before networking is up
+def node_prepare(vmid: int):
+
+  # define kname
+  kname = 'proxmox_node-prepare'
+  vmname = vmnames[vmid]
+
+  # skip already prepared nodes
+  if qa_exec(vmid, 'test -f /etc/kopsrox-node-init-done && echo done || echo todo') == 'done':
+    internet_check(vmid)
+    return
+
+  kmsg(kname, f'configuring {vmname}')
+
+  # neutralise pve-microvm first boot services
+  # microvm-setup waits for network then installs cloud-init/docker
+  # microvm-static-net regenerates network config every boot
+  qa_exec(vmid, 'systemctl disable --now microvm-setup.service 2>/dev/null; touch /etc/microvm-setup-done; systemctl disable microvm-static-net.service 2>/dev/null; true')
+
+  # static network via systemd-networkd
+  # match on driver - Type=ether also matches dummy0/sit0 from the kopsrox kernel
+  qa_write(vmid, '/etc/systemd/network/10-kopsrox.network', f'''\
+[Match]
+Driver=virtio_net
+
+[Link]
+MTUBytes={network_mtu}
+
+[Network]
+Address={vmip(vmid)}/{network_mask}
+Gateway={network_gw}
+DNS={network_dns}
+''')
+  qa_exec(vmid, 'rm -f /etc/systemd/network/20-microvm-dhcp.network /etc/microvm-static-net')
+
+  # fallback script + oneshot unit - networkd sometimes never claims the nic on microvm
+  qa_exec(vmid, 'mkdir -p /root/scripts /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests /etc/sudoers.d')
+  qa_write(vmid, '/root/scripts/kopsrox-net.sh', f'''\
+#!/bin/sh
+for dev in /sys/class/net/*; do
+  # skip virtual devices like lo/dummy0/sit0 - only real ( virtio ) nics have a device link
+  [ -e $dev/device ] || continue
+  dev=$(basename $dev)
+  ip link set $dev mtu {network_mtu} up
+  ip addr replace {vmip(vmid)}/{network_mask} dev $dev
+  ip route replace default via {network_gw} dev $dev
+done
+''', '755')
+  qa_write(vmid, '/etc/systemd/system/kopsrox-net.service', '''\
+[Unit]
+Description=kopsrox static network fallback
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/scripts/kopsrox-net.sh
+
+[Install]
+WantedBy=multi-user.target
+''')
+  qa_exec(vmid, 'systemctl enable kopsrox-net.service 2>/dev/null')
+
+  # dns - no systemd-resolved in the image
+  qa_write(vmid, '/etc/resolv.conf', f'nameserver {network_dns}\n')
+
+  # hostname - must match vmnames for k3s node operations
+  qa_write(vmid, '/etc/hostname', f'{vmname}\n')
+  qa_exec(vmid, f'sed -i /{vmname}/d /etc/hosts; echo 127.0.1.1 {vmname} >> /etc/hosts')
+
+  # fresh machine-id per clone - regenerated on boot
+  qa_exec(vmid, 'rm -f /etc/machine-id /var/lib/dbus/machine-id; touch /etc/machine-id')
+
+  # push k3s install scripts
+  qa_write(vmid, '/root/scripts/k3s.sh', open('./lib/scripts/k3s.sh').read(), '755')
+  qa_write(vmid, '/root/scripts/kopsrox.sh', kopsrox_sh(), '755')
+
+  # server config and manifests - masters only
+  if masterid <= vmid <= (masterid + 2):
+    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_server_config())
+    qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
+
+  # grow the root filesystem to the resized disk - partitionless ext4
+  qa_exec(vmid, 'resize2fs /dev/vda 2>/dev/null')
+
+  # create user
+  qa_exec(vmid, f'useradd -m -s /bin/bash -G sudo {cloudinituser} 2>/dev/null; echo {cloudinituser}:{cloudinitpass} | chpasswd')
+  qa_exec(vmid, f'mkdir -p /home/{cloudinituser}/.ssh')
+  qa_write(vmid, f'/home/{cloudinituser}/.ssh/authorized_keys', f'{cloudinitsshkey}\n', '600')
+  qa_exec(vmid, f'chown -R {cloudinituser}:{cloudinituser} /home/{cloudinituser}/.ssh')
+  qa_write(vmid, f'/etc/sudoers.d/{cloudinituser}', f'{cloudinituser} ALL=(ALL) NOPASSWD:ALL\n', '440')
+
+  # mark prepared and reboot into final state
+  qa_exec(vmid, 'touch /etc/kopsrox-node-init-done')
+  node_reboot_wait(vmid)
+
+  # verify static ip applied
+  ip_out = qa_exec(vmid, 'ip -4 addr show')
+  if not re.search(vmip(vmid), ip_out):
+    kmsg(kname, f'{vmname} static ip {vmip(vmid)} not configured', 'err')
+    exit(0)
+
+  # verify internet access
+  internet_check(vmid)
+
+  # install sudo ( not in the oci image ) plus any extra packages
+  packages = f'sudo {extra_packages.replace(",", " ")}'.strip()
+  kmsg(kname, f'{vmname} installing {packages}')
+  qa_exec(vmid, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
+
 # stop and destroy vm
 def prox_destroy(vmid: int):
 
@@ -153,10 +326,7 @@ def clone(vmid):
     cores = vm_cpu,
     memory = memory,
     balloon = '0',
-    boot = ('order=scsi0'),
-    net0 = (f'model=virtio,bridge={network_bridge},mtu={network_mtu}'),
-    ipconfig0 = (f'gw={network_gw},ip={ip}'),
-    nameserver = network_dns,
+    net0 = (f'model=virtio,bridge={network_bridge}'),
     description = (f'{vmid}:{hostname}:{ip}') 
   ))
 
@@ -169,8 +339,8 @@ def clone(vmid):
   # power on
   prox_task(prox.nodes(proxmox_node).qemu(vmid).status.start.post())
 
-  # run uptime / wait for qagent to start
-  internet_check(vmid)
+  # configure the node via the guest agent
+  node_prepare(vmid)
 
 # proxmox task blocker
 def prox_task(task_id, node=proxmox_node):
