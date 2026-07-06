@@ -30,6 +30,15 @@ def patch_microvm_template():
     ('''        ln -sf ../microvm-setup.service \\
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
      '        : # kopsrox: microvm-setup not enabled'),
+    # udev - without it dev-ttyS0.device never appears and the console= generated
+    # serial-getty stalls boot for its full 90s device timeout
+    # sudo - saves an apt-get run on every node create
+    # systemd-timesyncd - no ntp in the oci image
+    ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl"',
+     'PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl udev sudo systemd-timesyncd"'),
+    # with udev installed serial-getty would start and fight microvm-console for ttyS0
+    ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
+     'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
   ]
 
   template_script = open('/usr/bin/pve-microvm-template').read()
@@ -111,7 +120,7 @@ fi''').stdout.strip()
   # boot template with the kopsrox kernel - args is root only so use qm not the api
   kmsg(f'{kname}kernel', microvm_kernel)
   local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
--initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1"\'')
+-initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
 
   # define image desc
   img_ts = str(datetime.now())

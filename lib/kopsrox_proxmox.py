@@ -148,24 +148,26 @@ def node_reboot_wait(vmid: int):
   vmname = vmnames[vmid]
   kmsg(kname, f'rebooting {vmname}')
 
+  # note the current boot id - microvms reboot in about a second so watching
+  # for the agent to go down is a race we can lose
+  boot_id = qa_exec(vmid, 'cat /proc/sys/kernel/random/boot_id')
+
   # transient timer so the exec returns before the agent goes away
   qa_exec(vmid, 'systemd-run --on-active=1 systemctl reboot 2>/dev/null')
 
-  # wait for agent to go down
+  # wait for a new boot id
   count = int(0)
   while True:
+    time.sleep(2)
     try:
-      prox.nodes(proxmox_node).qemu(vmid).agent.ping.post()
-      count += 1
-      if count == 60:
-        kmsg(kname, f'{vmname} did not reboot', 'err')
-        exit(0)
-      time.sleep(1)
+      if qa_exec(vmid, 'cat /proc/sys/kernel/random/boot_id') != boot_id:
+        break
     except:
-      break
-
-  # qa_exec waits for the agent to come back
-  qa_exec(vmid, 'uptime')
+      pass
+    count += 1
+    if count == 60:
+      kmsg(kname, f'{vmname} did not reboot', 'err')
+      exit(0)
 
 # configure a newly cloned microvm via the guest agent
 # the agent runs over virtio-serial so this works before networking is up
@@ -272,10 +274,11 @@ WantedBy=multi-user.target
   # verify internet access
   internet_check(vmid)
 
-  # install sudo ( not in the oci image ) plus any extra packages
-  packages = f'sudo {extra_packages.replace(",", " ")}'.strip()
-  kmsg(kname, f'{vmname} installing {packages}')
-  qa_exec(vmid, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
+  # install any extra packages
+  if extra_packages:
+    packages = extra_packages.replace(',', ' ')
+    kmsg(kname, f'{vmname} installing {packages}')
+    qa_exec(vmid, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
 
 # stop and destroy vm
 def prox_destroy(vmid: int):
