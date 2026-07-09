@@ -3,7 +3,7 @@
 # functions
 from kopsrox_config import *
 from kopsrox_k3s import k3s_remove_node, k3s_init_node, cluster_info
-from kopsrox_proxmox import clone
+from kopsrox_proxmox import clone, node_reboot_wait
 
 # passed command
 cmd = sys.argv[2]
@@ -52,9 +52,10 @@ if cmd not in ['utility']:
         k3s_remove_node(vmid)
         exit(0)
 
-      # reboot
+      # reboot in-guest via the agent - qm reboot hangs on microvm as
+      # pve-microvm omits the qmeventd socket that reaps the halted process
       if cmd == 'reboot':
-        os.system(f'sudo qm reboot {vmid} &')
+        node_reboot_wait(vmid)
         exit(0)
 
       # k3s uninstall
