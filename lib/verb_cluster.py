@@ -23,6 +23,16 @@ if cmd == 'restore':
   kmsg(kname,f'id:{cluster_id} name:{cluster_name}', 'sys')
   clone(masterid)
   k3s_init_node(masterid, 'restore')
+
+  # the restored datastore contains stale node objects and node password
+  # secrets for nodes that no longer exist - without a cloud controller
+  # nothing garbage collects them and rebuilt nodes get rejected
+  for vmid in vmnames:
+    vmname = vmnames[vmid]
+    if vmname not in [f'{cluster_name}-i0', f'{cluster_name}-m1', f'{cluster_name}-u1']:
+      kubectl(f'delete node {vmname} --ignore-not-found')
+      kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found')
+
   cluster_info()
   kmsg(kname,f'restore completed')
   k3s_update_cluster()

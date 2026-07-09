@@ -13,7 +13,8 @@ def k3s_check(vmid: int):
     return False
 
   # return true if Ready
-  if re.search('Ready', get_node):
+  # word boundary as NotReady also contains Ready
+  if re.search(r'\bReady\b', get_node):
     return True
   return False
 
@@ -95,6 +96,8 @@ def k3s_remove_node(vmid: int):
     kubectl('cordon ' + vmname)
     kubectl('drain --timeout=10s --delete-emptydir-data --ignore-daemonsets --force ' + vmname)
     kubectl('delete node ' + vmname)
+    # remove the node password secret or a rebuilt node with this name gets rejected
+    kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found')
 
   # destroy vm
   prox_destroy(vmid)
