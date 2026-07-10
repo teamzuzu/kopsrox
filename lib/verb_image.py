@@ -34,10 +34,9 @@ def patch_microvm_template():
     # serial-getty stalls boot for its full 90s device timeout
     # sudo - saves an apt-get run on every node create
     # systemd-timesyncd - no ntp in the oci image
-    # dbus - qemu-ga guest-shutdown runs shutdown +0 which needs logind/dbus -
-    # without it qm shutdown/reboot silently do nothing ( microvm has no acpi fallback )
-    ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl"',
-     'PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl udev sudo systemd-timesyncd dbus"'),
+    # ( dbus is upstream since pve-microvm 0.3.19 )
+    ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
+     'PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd"'),
     # with udev installed serial-getty would start and fight microvm-console for ttyS0
     ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
      'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),

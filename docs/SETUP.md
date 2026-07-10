@@ -11,7 +11,11 @@
 
 - get one of the releases or stable branches - the 'main' branch can often be a bit broken
 - sudo apt install python3-termcolor python3-proxmoxer python3-requests -y
-- install pve-microvm on the proxmox node - see https://github.com/rcarmo/pve-microvm
+- install pve-microvm 0.3.19 or later on the proxmox node - see https://github.com/rcarmo/pve-microvm
+- restart pvedaemon after installing or upgrading pve-microvm - it keeps the old code loaded and api-started vms miss fixes until then:
+
+`sudo systemctl restart pvedaemon`
+
 - build the kopsrox microvm kernel ( one time - the stock pve-microvm kernel can't run k3s ):
 
 `./dev/build-kopsrox-kernel.sh`
