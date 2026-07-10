@@ -123,7 +123,7 @@ def init_kopsrox_ini():
 
   # k3s version
   config.set(ks, '; k3s version')
-  config.set(ks, 'k3s_version', '1.34.1+k3s1')
+  config.set(ks, 'k3s_version', 'v1.34.5+k3s1')
 
   # s3 endpoint
   config.set(ks, '; s3 endpoint')

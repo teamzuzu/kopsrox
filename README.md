@@ -1,23 +1,25 @@
 # kopsrox
 
-- NEWS: kopsrox now uses the new micro vms supported in pve https://github.com/rcarmo/pve-microvm
+kopsrox creates and manages simple HA [k3s](https://k3s.io) clusters on [Proxmox VE](https://www.proxmox.com/) using lightweight microvms from [pve-microvm](https://github.com/rcarmo/pve-microvm) :rocket:
 
-- kopsrox is a script to help create and manage simple ha k3s clusters on ProxmoxVE
-- nodes are lightweight microvms built from upstream OCI images - no iso's or cloud images to mess around with
-- add more master/worker k3s nodes using a simple config file and cli interface :pray:
-- kube-vip ( https://kube-vip.io/ ) built in providing full HA setup for the kube api and traefik :atom:
-- storage via the k3s local-path provisioner ( the proxmox csi driver needs disk hotplug which microvms don't support yet )
-- easy management of etcd S3 snapshot/restore operations - easily restore a cluster from s3! :floppy_disk:
-- export the k3s token, your kubeconfig etc etc - its all automatic  :nerd_face:
+- nodes are microvms built from plain OCI images ( default `ubuntu:24.04` ) - no ISOs or cloud images to mess around with
+- microvms boot in about **1 second** - a fresh HA-capable cluster is up in around 2.5 minutes :zap:
+- add or remove master/worker nodes by editing a simple config file and running one command :pray:
+- [kube-vip](https://kube-vip.io/) built in - a highly available VIP for the kube api and traefik :atom:
+- storage via the k3s local-path provisioner
+- easy etcd S3 snapshot/restore - rebuild your whole cluster from S3 with one command :floppy_disk:
+- everything happens through the qemu guest agent - no cloud-init, no ssh required, and it works before the node even has networking :nerd_face:
+- exports your kubeconfig and k3s token automatically
 
-  get it https://github.com/simonccc/kopsrox/releases
+get it: https://github.com/simonccc/kopsrox/releases
 
 # docs
- - [SETUP.md](docs/SETUP.md)
- - [GETSTARTED.md](docs/GETSTARTED.md)
- - [USAGE.md](docs/USAGE.md)
- - [FAQ.md](docs/FAQ.md)
 
-# in progress
- - Recent: add proxmox-cloud-controller-manager
- - Going to check proxmox CSI driver
+- [SETUP.md](docs/SETUP.md) - requirements and installation
+- [GETSTARTED.md](docs/GETSTARTED.md) - your first cluster in 5 commands
+- [USAGE.md](docs/USAGE.md) - every command explained
+- [FAQ.md](docs/FAQ.md) - common questions and microvm gotchas
+
+# thanks
+
+kopsrox stands on the shoulders of [pve-microvm](https://github.com/rcarmo/pve-microvm), [k3s](https://k3s.io) and [kube-vip](https://kube-vip.io/) :heart:

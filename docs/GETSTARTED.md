@@ -1,37 +1,62 @@
 # get started
 
-## setup a kopsrox.ini
+done with [SETUP.md](SETUP.md)? your first cluster is 3 commands away :tada:
 
-`./kopsrox.py` - a default kopsrox.ini will be created
+## :gear: create a config
 
-you will need to edit this for your setup
+```
+./kopsrox.py
+```
 
-follow the guide in [SETUP.md](SETUP.md)
+a default `kopsrox.ini` is created - edit it for your setup ( see [SETUP.md](SETUP.md) )
 
-## 🥑 create an image
+## :package: create the image
 
-`./kopsrox.py image create`
+```
+./kopsrox.py image create
+```
 
-## create a cluster
+builds a microvm template from the configured OCI image ( takes a couple of minutes - watch `kopsrox-image.log` if curious )
 
-`./kopsrox.py cluster create`
+## :rocket: create the cluster
 
-## 🚑 add a worker
+```
+./kopsrox.py cluster create
+```
 
-for example edit `kopsrox.ini` and set `workers = 1` in the `[cluster]` section
+clones the template into master + worker nodes, installs k3s and exports `<cluster_name>.kubeconfig` + `<cluster_name>.k3stoken` to the current directory - about 2.5 minutes for 1 master + 1 worker
 
-`./kopsrox.py cluster update`
+## :mag: use it
 
-## ➡️ check the cluster info
+```
+./kopsrox.py cluster info
+./kopsrox.py k3s kubectl get pods -A
+kubectl --kubeconfig=<cluster_name>.kubeconfig get nodes
+```
 
-`./kopsrox.py cluster info`
+## :chart_with_upwards_trend: scale it
 
-## 🍎 create etcd snapshot 
+edit `kopsrox.ini` - eg set `workers = 3` or `masters = 3` ( 1 or 3 masters only ) - then:
 
-Configure 'kopsrox.ini' with suitable s3 details for your provider
+```
+./kopsrox.py cluster update
+```
 
-`./kopsrox.py etcd snapshot`
+with 3 masters the kube api stays up even if you kill the VIP master :muscle:
 
-## 🛺 restore the latest snapshot
+## :floppy_disk: back it up
 
-`./kopsrox.py etcd restore-latest`
+configure the `s3_*` settings in `kopsrox.ini` for your provider then:
+
+```
+./kopsrox.py etcd snapshot
+./kopsrox.py etcd list
+```
+
+## :ambulance: restore it
+
+```
+./kopsrox.py cluster restore
+```
+
+rebuilds the whole cluster from the latest S3 snapshot - even if every node is gone

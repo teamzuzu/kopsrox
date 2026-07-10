@@ -1,126 +1,103 @@
-#  :hamburger: kopsrox usage 
+# :hamburger: kopsrox usage
 
-documentation is a WIP :construction:
+`./kopsrox.py [verb] [command] [arg]`
 
 - [image](#image)
 - [cluster](#cluster)
+- [k3s](#k3s)
 - [etcd](#etcd)
 - [node](#node)
-- [k3s](#k3s)
-- [kubevip](#kubevip)
 
-##  :cyclone: image <a name=image>
-### :white_check_mark: create 
-- downloads the cloud image from the url defined in kopsrox.ini
-- installs `qemu-guest-agent` into the image via `virt-customise`
-- imports the disk into proxmox storage using a `sudo qm` command
-- creates cloudinit drive with cloudinit data per config
-- converts the vm into a template
+## :cyclone: image <a name=image>
+
+### create / update
+- builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini` ( via a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) - log in `kopsrox-image.log` )
+- verifies the rootfs, sets the kopsrox kernel and converts to a template on vmid `cluster_id`
+- nothing cluster-specific is baked in - node identity and k3s config are pushed per node at create time via the guest agent
+
+### info
+- prints the template description ( source image, k3s version, creation time ) and storage volume
+
+### :warning: destroy
+- deletes the image template
+
+## :cyclone: cluster <a name=cluster>
+
+### create
+- creates a fresh cluster - clones the template into master ( and worker ) nodes per `kopsrox.ini`, installs k3s and exports the kubeconfig + token
+- safe to re-run - if a working master exists it acts like `cluster update`
 
 ### update
-- an alias for create
-  
-### :warning: destroy 
-- deletes any existing image template
+- reconciles the running cluster against `masters` / `workers` in `kopsrox.ini` - adds or drains+removes nodes as needed
 
-### info 
-- prints info about image/template vm eg storage, id, creation time and source cloud image file
-- size
-- creation time
-- is it stored on shared storage
+### info
+- lists vmids, hostnames, ips and which proxmox host they run on, plus `kubectl get nodes`
+- shows which node currently holds the VIP
 
-## :cyclone:  cluster <a name=cluster>
-### :white_check_mark: create 
-- creates and updates a cluster - use this to setup a fresh cluster
-- if an existing working master is found it runs the same steps as `kopsrox cluster update`
-- clones the image to the '-m1' server and configures networking via cloudinit
-- exports kubeconfig and node token
+### restore
+- rebuilds the whole cluster from the **latest** S3 etcd snapshot - works even if all nodes are gone
+- restores the master then reconciles the rest per `kopsrox.ini`
 
-### update 
-- checks the state of the cluster vs what is configured in `kopsrox.ini`
-- updates the cluster ( eg adding / deleting nodes ) as required
-
-### info 
-- shows a list of ids, hostnames and ips the host they are running on
-- shows `kubectl get nodes`
-
-### :warning: destroy 
-- destroys the cluster ( NO WARNING! ) 
-- deletes workers then masters in safe order
+### :warning: destroy
+- destroys the cluster ( NO WARNING! ) - workers drained and removed first, then masters
+- the image template and utility node are left alone
 
 ## :cyclone: k3s <a name=k3s>
-### k3stoken 
-- exports the clusters k3s token
 
-### kubeconfig 
-- export the cluster kubeconfig to a file 
-- file is patched to have correct VIP IP vs 127.0.0.1
+### export-token
+- exports the cluster k3s token to `<cluster_name>.k3stoken` ( needed for restores - keep it safe )
+
+### kubeconfig
+- exports the kubeconfig to `<cluster_name>.kubeconfig` - patched to point at the VIP instead of 127.0.0.1
 
 ### check-config
-- runs k3s check-config and displays the output
+- runs `k3s check-config` on the master and shows the output ( the kopsrox kernel exposes `/proc/config.gz` so this works fully )
 
-### kubectl
-- provides a quick and basic way to run some kubectl commands for example:
+### kubectl [cmd]
+- quick way to run kubectl on the master via the guest agent:
 
 `./kopsrox.py k3s kubectl get events -A`
 
+### reload-kubevip
+- restarts the kube-vip daemonset
+
 ## :cyclone: etcd <a name=etcd>
-### :white_check_mark: snapshot 
 
-`./kopsrox.py etcd snapshot`
+### snapshot
+- takes an etcd snapshot and uploads it to the configured S3 storage
 
-Takes a backup of etcd
+### list
+- lists this cluster's snapshots in S3
 
-`./kopsrox.py etcd list`
+### restore [snapshot]
+- restores the cluster from a specific snapshot ( get names from `etcd list` )
+- for "just restore the latest" use `cluster restore`
 
-Should show the new backup
-
-### list 
-
-`./kopsrox.py etcd list`
-
-- lists snapshots taken in s3 storage based on cluster name
-
-### restore 
-
-restores a cluster from a previously taken s3 snapshot
-
-usage:
-
-`./kopsrox.py etcd restore $imagename`
-
-- downsizes the cluster to 1 node then resizes back to the scale set in `kopsrox.ini`
-
-### restore-latest
-- restores the cluster from the latest snapshot in the configured s3 storage
-
-### prune 
-- deletes old snapshots per the retention policy set on the bucket
+### prune
+- deletes old snapshots per the retention policy
 
 ## :cyclone: node <a name=node>
 
-### :warning: destroy [hostname]
-- destroys the passed vm hostname  ( NO WARNING ) 
-
-### :white_check_mark: utility
-- creates a spare "utility" node -u1
+### utility
+- creates a spare "utility" node ( `-u1` ) - fully configured but no k3s - handy for testing and debugging
 
 ### terminal [hostname]
-- connects you to the passed vm's serial console via `qm terminal`
+- connects to the node's serial console via `qm terminal` - root autologin, no password needed ( ctrl-o to exit )
 
-### ssh [hostname] 
-- connect via ssh to a kopsrox cluster vm 
-- uses configured cloudinit user as username
-- requires working ssh key configured in config
+### ssh [hostname]
+- ssh to a node as the configured user ( requires your ssh key in `kopsrox.ini` )
 
 ### reboot [hostname]
-- reboots the host
+- reboots the node via the guest agent and waits for it to come back ( microvms reboot in about a second :zap: )
+
+### :warning: destroy [hostname]
+- drains, removes and deletes the node ( NO WARNING )
 
 ### k3s-uninstall [hostname]
-- uninstalls k3s using the usual script
-- for experimenting with k3s reinstall
+- uninstalls k3s from the node - for experimenting with reinstalls
 
-## :cyclone: kubevip <a name=kubevip>
+### rejoin-slave [hostname]
+- reinstalls k3s on a master and rejoins it to the cluster
 
-### reinstall
-- reinstalls kubevip 
+### cluster-exec [command]
+- runs a command on every node via the guest agent

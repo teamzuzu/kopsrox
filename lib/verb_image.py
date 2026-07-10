@@ -54,8 +54,8 @@ def patch_microvm_template():
   os.chmod(patched_path, 0o755)
   return(patched_path)
 
-# create image
-if cmd == 'create':
+# create image ( update is an alias )
+if cmd in ['create', 'update']:
 
   kmsg(f'{kname}create', f'{cluster_name}-i0 microvm template based on {oci_image}', 'sys')
 
