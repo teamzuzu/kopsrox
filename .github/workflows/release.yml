@@ -1,0 +1,32 @@
+name: release
+
+# push a tag like v1.0.0 to cut a release:
+#   git tag v1.2.3 && git push origin v1.2.3
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # sanity check before releasing anything
+      - name: syntax check
+        run: |
+          python3 -m py_compile kopsrox.py lib/*.py
+          bash -n dev/*.sh
+
+      # clean tarball of the tagged tree
+      - name: package
+        run: git archive --format=tar.gz --prefix=kopsrox-${{ github.ref_name }}/ -o kopsrox-${{ github.ref_name }}.tar.gz ${{ github.ref_name }}
+
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create ${{ github.ref_name }} kopsrox-${{ github.ref_name }}.tar.gz --title ${{ github.ref_name }} --generate-notes
