@@ -139,6 +139,25 @@ if passed_cmd == 'image':
   # oci image used to build the microvm template
   oci_image = conf_check('oci_image')
 
+  # pve-microvm version checks
+  # kopsrox needs 0.3.19+ ( qm shutdown fix and the template layout we patch )
+  microvm_ver = subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"], text=True, capture_output=True).stdout.strip()
+  if microvm_ver == 'none':
+    kmsg(kname, 'pve-microvm is not installed - see docs/SETUP.md', 'err')
+    exit(0)
+  microvm_installed = tuple(map(int, microvm_ver.split('-')[0].split('.')))
+  if microvm_installed < (0, 3, 19):
+    kmsg(kname, f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.19 or later', 'err')
+    exit(0)
+
+  # notify if upstream has a newer release - skip quietly if offline
+  try:
+    microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
+    if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
+      kmsg(kname, f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ) - restart pvedaemon after upgrading!', 'sys')
+  except:
+    pass
+
   # kopsrox microvm kernel/initrd - optional overrides
   microvm_kernel = kopsrox_config.get('kopsrox', 'microvm_kernel', fallback='/usr/share/pve-microvm/vmlinuz-kopsrox')
   microvm_initrd = kopsrox_config.get('kopsrox', 'microvm_initrd', fallback='/usr/share/pve-microvm/initrd-kopsrox')
