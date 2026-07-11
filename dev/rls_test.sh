@@ -2,7 +2,7 @@
 
 start_time=$(date +%s)
 
-# kopsrox aliases
+# kopsrox aliases
 CFG="kopsrox.ini"
 K="./kopsrox.py"
 KC="$K cluster"
@@ -26,8 +26,37 @@ kc() {
   sed -i /"$1 =/c\\$1 = $2" $CFG
 }
 
-# get pods
+# get pods
 get_pods="$KC kubectl get pods -A"
+
+# format seconds as 3m21s
+fmt() {
+  local s=$1
+  [[ $s -ge 60 ]] && echo "$((s / 60))m$((s % 60))s" || echo "${s}s"
+}
+
+# phase banner
+total_phases=6
+phase_num=0
+phase() {
+  phase_num=$((phase_num + 1))
+  echo
+  echo "🧪 [${phase_num}/${total_phases}] $1"
+  echo "──────────────────────────────────────────────"
+}
+
+# run a step: prints label, runs command, prints time taken
+current_step="startup"
+run() {
+  current_step="$1"; shift
+  local t0=$(date +%s)
+  echo "▶️  $current_step"
+  "$@"
+  echo "✅ $current_step ($(fmt $(($(date +%s) - t0))))"
+}
+
+# report which step failed and total elapsed time
+trap 'echo; echo "❌ FAILED: $current_step (after $(fmt $(($(date +%s) - start_time))))"' ERR
 
 # remove any generated files
 rm \
@@ -38,38 +67,42 @@ lib/scripts/* \
 *.kubeconfig \
 *.k3stoken \
 > /dev/null 2>&1
-set -e
+# -E so the ERR trap fires inside run()
+set -eE
 
+echo "🚀 kopsrox release test - $(date '+%F %T')"
 
-echo "START"
-
-# 1 size cluster
-$KCD
+phase "clean slate 🧹"
+run "destroy existing cluster" $KCD
 kc workers 0 ; kc masters 1
+echo "⚙️  config: 1 master, 0 workers"
 
-# ** 1 MASTER, SNAPSHOT RESTORE
-# create image, create and update cluster
-( $KIC && $KCC && $KCU ) || exit
+phase "image + 1 master cluster 🖼️"
+run "image create" $KIC
+run "cluster create" $KCC
+run "cluster update" $KCU
 
-# take snapshot , destroy cluster, create, restore
-$KES ; $KCD ; $KCC ; $KERL
+phase "etcd snapshot + restore 📸"
+run "etcd snapshot" $KES
+run "cluster destroy" $KCD
+run "cluster create" $KCC
+run "etcd restore-latest" $KERL
 
-# ** MULTIPLE MASTERS AND WORKERS TEST
-# add a worker and delete it
-kc workers 1 ; $KCU ; kc workers 0 ; $KCU
+phase "worker scaling 👷"
+kc workers 1 ; run "scale workers 0 -> 1" $KCU
+kc workers 0 ; run "scale workers 1 -> 0" $KCU
+kc workers 2 ; run "scale workers 0 -> 2" $KCU
 
-# re add worker
-kc workers 2 ; $KCU
-
-# add 3 masters and go back to 1
-kc masters 3 ; $KCU ; kc masters 1  ; $KCU
+phase "master scaling 👑"
+kc masters 3 ; run "scale masters 1 -> 3" $KCU
+kc masters 1 ; run "scale masters 3 -> 1" $KCU
 
 # change back to 1 node
 kc masters 1 ; kc workers 0
 
-# ** TEST cluster restore
-# destroy cluster
-$KCD ; $KCR
+phase "full cluster restore ♻️"
+run "cluster destroy" $KCD
+run "cluster restore" $KCR
 
-finish_time=$(date +%s) 
-echo  $((finish_time - start_time)) secs
+echo
+echo "🎉 ALL TESTS PASSED in $(fmt $(($(date +%s) - start_time)))"
