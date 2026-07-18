@@ -15,10 +15,16 @@ if cmd == 'info':
 
 # update cluster
 if cmd == 'update':
+  kplan(cluster_plan_total(), f'{cluster_name} cluster update')
   k3s_update_cluster()
 
 # restore from latest etcd snapshot
 if cmd == 'restore':
+
+  # removals + m1 clone/restore-init/export + m1 recheck + rebuilt slaves and workers
+  removals = len([v for v in list_kopsrox_vm() if vmnames[v] not in [f'{cluster_name}-i0', f'{cluster_name}-u1']])
+  kplan(removals + 4 + 2 * (masters - 1) + 2 * workers, f'{cluster_name} cluster restore')
+
   k3s_rm_cluster()
   kmsg(kname,f'id:{cluster_id} name:{cluster_name}', 'sys')
   clone(masterid)
@@ -40,6 +46,9 @@ if cmd == 'restore':
 # create new cluster / master server
 if cmd == 'create':
 
+  # + 1 - the master init runs here and again as a recheck inside k3s_update_cluster
+  kplan(cluster_plan_total() + 1, f'{cluster_name} cluster create')
+
   # if masterid not found running
   if not masterid in list_kopsrox_vm():
     kmsg(kname,f'{cluster_name} id {cluster_id} network {network_ip} m {masters} w {workers}', 'sys')
@@ -53,5 +62,7 @@ if cmd == 'create':
 
 # destroy the cluster
 if cmd == 'destroy':
+  removals = len([v for v in list_kopsrox_vm() if vmnames[v] not in [f'{cluster_name}-i0', f'{cluster_name}-u1']])
+  kplan(removals, f'{cluster_name} cluster destroy')
   kmsg(kname, f'{cluster_name}', 'err')
   k3s_rm_cluster()

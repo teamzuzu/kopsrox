@@ -23,7 +23,7 @@ if cmd == 'cluster-exec':
     if vmid != cluster_id:
       kmsg('node_cluster-exec', f'{vmnames[vmid]} {arg}')
       os.system(f'sudo qm guest exec {vmid} {arg}')
-  exit(1)
+  exit(0)
 
 
 # all commands aside from utility require a hostname passed - so check them here
@@ -68,8 +68,8 @@ if cmd not in ['utility']:
         k3s_init_node(vmid, 'slave')
         exit(0)
 
-  # vm not found 
-  kmsg(kname, f'{arg} vm not found', 'err')
+  # vm not found
+  kabort(kname, f'{arg} vm not found')
 
 # create utility node
 if cmd == 'utility':

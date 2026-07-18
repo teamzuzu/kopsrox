@@ -45,8 +45,7 @@ def patch_microvm_template():
   template_script = open('/usr/bin/pve-microvm-template').read()
   for old, new in patches:
     if old not in template_script:
-      kmsg(f'{kname}patch', f'pve-microvm-template patch failed - upstream changed?\n{old}', 'err')
-      exit(0)
+      kabort(f'{kname}patch', f'pve-microvm-template patch failed - upstream changed?\n{old}')
     template_script = template_script.replace(old, new)
 
   patched_path = './lib/scripts/microvm-template.sh'
@@ -59,15 +58,16 @@ if cmd in ['create', 'update']:
 
   kmsg(f'{kname}create', f'{cluster_name}-i0 microvm template based on {oci_image}', 'sys')
 
+  # template build / rootfs verify / kernel args / tag
+  kplan(4, f'{cluster_name} image create')
+
   # check pve-microvm is installed on this node
   if not os.path.isfile('/usr/share/pve-microvm/vmlinuz'):
-    kmsg(f'{kname}check', 'pve-microvm not installed - see https://github.com/rcarmo/pve-microvm', 'err')
-    exit(0)
+    kabort(f'{kname}check', 'pve-microvm not installed - see https://github.com/rcarmo/pve-microvm')
 
   # check the kopsrox kernel has been built
   if not (os.path.isfile(microvm_kernel) and os.path.isfile(microvm_initrd)):
-    kmsg(f'{kname}check', f'{microvm_kernel} not found - run dev/build-kopsrox-kernel.sh', 'err')
-    exit(0)
+    kabort(f'{kname}check', f'{microvm_kernel} not found - run dev/build-kopsrox-kernel.sh')
 
   # download k3s.sh
   get_k3s_path = './lib/scripts/k3s.sh'
@@ -77,8 +77,7 @@ if cmd in ['create', 'update']:
       dl_k3s = requests.get('https://get.k3s.io')
       open(get_k3s_path, 'wb').write(dl_k3s.content)
     except:
-      kmsg(f'{kname}check', f'unable to download get k3s script', 'err')
-      exit(1)
+      kabort(f'{kname}check', f'unable to download get k3s script')
 
   # generate cluster artifacts - pushed into nodes at create time via the guest agent
   open(f'./lib/manifests/kopsrox-{cluster_name}.yaml', 'w').write(kopsrox_manifest())
@@ -94,15 +93,17 @@ if cmd in ['create', 'update']:
 
   # build the microvm template with a patched copy of pve-microvm-template
   microvm_template = patch_microvm_template()
-  kmsg(f'{kname}template', f'running {microvm_template} ( log: kopsrox-image.log )')
-  local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
+  with kstep(f'{kname}template', f'running {microvm_template} ( log: kopsrox-image.log )'):
+    local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 --name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 2G --memory 1024 \
 --cores 1 --profile standard --no-docker > kopsrox-image.log 2>&1')
+  kplan_tick()
 
   # the template build hides chroot failures - verify the guest actually has
   # systemd and the guest agent before going any further
-  img_dev = local_exec(f'sudo pvesm path {proxmox_storage}:base-{cluster_id}-disk-0').stdout.strip()
-  img_check = local_exec(f'''
+  with kstep(f'{kname}verify', 'checking template rootfs'):
+    img_dev = local_exec(f'sudo pvesm path {proxmox_storage}:base-{cluster_id}-disk-0').stdout.strip()
+    img_check = local_exec(f'''
 sudo lvchange -ay -K {img_dev} 2>/dev/null || true
 sudo mkdir -p /tmp/kopsrox-img-check
 if sudo mount -o ro {img_dev} /tmp/kopsrox-img-check 2>/dev/null; then
@@ -112,9 +113,9 @@ if sudo mount -o ro {img_dev} /tmp/kopsrox-img-check 2>/dev/null; then
 else
   echo nomount
 fi''').stdout.strip()
+  kplan_tick()
   if re.search('missing', img_check):
-    kmsg(f'{kname}check', 'template rootfs is missing systemd/qemu-ga - check kopsrox-image.log', 'err')
-    exit(0)
+    kabort(f'{kname}check', 'template rootfs is missing systemd/qemu-ga - check kopsrox-image.log')
   if re.search('nomount', img_check):
     kmsg(f'{kname}check', 'unable to mount template disk to verify rootfs - continuing', 'sys')
 
@@ -122,6 +123,7 @@ fi''').stdout.strip()
   kmsg(f'{kname}kernel', microvm_kernel)
   local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
 -initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
+  kplan_tick()
 
   # define image desc
   img_ts = str(datetime.now())
@@ -136,6 +138,7 @@ created: {img_ts}'''
     description = image_desc,
     tags = f'{cluster_name},microvm',
   ))
+  kplan_tick()
 
 # image info
 if cmd == 'info':

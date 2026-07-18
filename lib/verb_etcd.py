@@ -14,15 +14,13 @@ token_fname = f'{cluster_name}.k3stoken'
 try:
   node = vms[masterid]
 except:
-  kmsg(f'{kname}-check', 'cluster does not exist', 'err')
-  exit(0)
+  kabort(f'{kname}-check', 'cluster does not exist')
 
 # check token
 try:
   get_k3s_token()
 except:
-  kmsg(f'{kname}-check', 'problem with k3s token', 'err')
-  exit(0)
+  kabort(f'{kname}-check', 'problem with k3s token')
 
 # run k3s s3 command passed
 def s3_run(s3cmd):
@@ -33,8 +31,7 @@ def s3_run(s3cmd):
 
   # look for fatal error in output
   if re.search('level=fatal', s3_out):
-    kmsg(f'{kname}-s3run', f'\n {s3_out}', 'err')
-    exit(0)
+    kabort(f'{kname}-s3run', f'\n {s3_out}')
 
   # return command outpit
   return(s3_out)
@@ -65,8 +62,7 @@ def list_snapshots():
 try:
   snapshots = list_snapshots()
 except:
-  kmsg(f'{kname}-check', 'error getting data from s3 repo', 'err')
-  exit(0)
+  kabort(f'{kname}-check', 'error getting data from s3 repo')
 
 # s3 prune
 if cmd == 'prune':
@@ -108,7 +104,7 @@ if cmd == 'restore' or cmd == 'restore-latest':
   if not re.search(snapshot,snapshots):
     kmsg(kname, f'{snapshot} not found', 'err')
     s3_list()
-    exit(0)
+    exit(1)
 
   # info
   kmsg(kname,f'restoring {snapshot}', 'sys')
