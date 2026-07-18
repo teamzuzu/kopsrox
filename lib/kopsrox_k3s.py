@@ -19,27 +19,27 @@ def k3s_check(vmid: int):
   return False
 
 # create a master/slave/worker
-def k3s_init_node(vmid: int = masterid,nodetype = 'master',snapshot = 'kopsrox'):
+def k3s_init_node(vmid: int = masterid, nodetype = 'master', snapshot = 'kopsrox'):
 
   # nodetype error check
   if nodetype not in ['master', 'slave', 'worker', 'restore']:
-    kmsg('k3s_init-node', f'{nodetype} invalid nodetype', 'err')
-    exit(0)
+    kabort('k3s_init-node', f'{nodetype} invalid nodetype')
 
-  # check node has internet
-  try:
-    internet_check(vmid)
-  except:
-    kmsg('k3s_init-node', f'{vmid} no internet', 'err')
-    exit(0)
+  # check node has internet - aborts itself on failure
+  internet_check(vmid)
 
-  # if k3s is up  on existing master node
+  # map vmname
+  vmname = vmnames[vmid]
+
+  # k3s already up on this node
   if k3s_check(vmid):
-     return
+    kmsg(f'k3s_{nodetype}', f'{vmname} Ready')
+    kplan_tick()
+    return
 
-  # master
+  # master / slave / worker
   if nodetype in ['master', 'worker', 'slave']:
-    kmsg(f'k3s_{nodetype}-init', f'configuring {k3s_version} on {vmnames[vmid]}')
+    step_msg = f'installing {k3s_version} on {vmname}'
     init_cmd = f'/root/scripts/kopsrox.sh {nodetype} {vmid} {get_k3s_token()}'
 
   # restore
@@ -54,53 +54,54 @@ def k3s_init_node(vmid: int = masterid,nodetype = 'master',snapshot = 'kopsrox')
             latest = snap.split()[0]
       snapshot = latest
 
-    kmsg(f'k3s_restore', f'restoring {snapshot}')
+    step_msg = f'restoring {snapshot}'
     init_cmd = f'/root/scripts/kopsrox.sh restore {snapshot} {get_k3s_token()}'
 
   # write log of install on node
   init_cmd = init_cmd + f' > /k3s_{nodetype}_install.log 2>&1'
 
-  # run command
-  qa_exec(vmid,init_cmd)
+  with kstep(f'k3s_{nodetype}', step_msg) as step:
 
-  # wait until ready
-  wait: int = 20
-  count: int = 1
-  status = ''
-  while not status == 'Ready':
-    try:
-      if not k3s_check(vmid):
-        exit(0)
-      status = 'Ready'
-    except:
-      count += 1
+    # run command
+    qa_exec(vmid,init_cmd)
 
-    if count == wait:
-       kmsg('k3s_check', f'timed out after {wait}s for {vmnames[vmid]}', 'err')
-       exit(0)
-    time.sleep(1)
+    # wait until ready - each k3s_check is a kubectl run so takes a second or two
+    step.msg = f'waiting for {vmname} Ready'
+    wait: int = 20
+    for count in range(wait):
+      if k3s_check(vmid):
+        break
+      time.sleep(1)
+    else:
+      kabort('k3s_check', f'timed out after {wait}s for {vmname}')
+
+  kplan_tick()
 
   # final steps for first master / restore export kubeconfig and token
   if nodetype in ['master', 'restore']:
-    kubeconfig()
-    export_k3s_token()
+    with kstep('k3s_export', 'kubeconfig + token'):
+      kubeconfig()
+      export_k3s_token()
+    kplan_tick()
 
 # remove a node
 def k3s_remove_node(vmid: int):
 
   # get vmname
   vmname = vmnames[vmid]
-  kmsg('k3s_remove-node', vmname)
 
-  if vmname != f'{cluster_name}-m1':
-    kubectl('cordon ' + vmname)
-    kubectl('drain --timeout=10s --delete-emptydir-data --ignore-daemonsets --force ' + vmname)
-    kubectl('delete node ' + vmname)
-    # remove the node password secret or a rebuilt node with this name gets rejected
-    kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found')
+  with kstep('k3s_remove-node', vmname):
+    if vmname != f'{cluster_name}-m1':
+      kubectl('cordon ' + vmname)
+      kubectl('drain --timeout=10s --delete-emptydir-data --ignore-daemonsets --force ' + vmname)
+      kubectl('delete node ' + vmname)
+      # remove the node password secret or a rebuilt node with this name gets rejected
+      kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found')
 
-  # destroy vm
-  prox_destroy(vmid)
+    # destroy vm
+    prox_destroy(vmid)
+
+  kplan_tick()
 
 # remove cluster - leave master if restore = true
 def k3s_rm_cluster():
@@ -118,8 +119,43 @@ def k3s_rm_cluster():
     # remove node from cluster and proxmox
     if vmname == f'{cluster_name}-m1':
       prox_destroy(vmid)
+      kplan_tick()
     else:
       k3s_remove_node(vmid)
+
+# best effort plan unit count for the progress bar - mirrors k3s_update_cluster
+# units: 1 per missing node ( clone + prepare ), 1 per target k3s init/check,
+# 1 for kubeconfig/token export when the master needs installing, 1 per removal
+def cluster_plan_total():
+
+  vmids = list_kopsrox_vm()
+
+  # target nodes per the ini
+  targets = [masterid]
+  if masters == 3:
+    targets += [masterid + 1, masterid + 2]
+  workerid = masterid + 3
+  targets += [workerid + count for count in range(1, workers + 1)]
+
+  total = 0
+  for target in targets:
+    if target not in vmids:
+      total += 1
+    total += 1
+
+  # kubeconfig / token export happens when the master actually installs
+  if not conf_check_master_up:
+    total += 1
+
+  # removals - extra masters and anything past the last configured worker
+  last_worker = workerid + workers
+  for vmid in vmids:
+    if masters == 1 and vmid in (masterid + 1, masterid + 2):
+      total += 1
+    if vmid > last_worker:
+      total += 1
+
+  return total
 
 # builds or removes other nodes from the cluster as required per config
 def k3s_update_cluster():
@@ -234,8 +270,7 @@ def export_k3s_token():
 
       # passwords are different..
       if not saved_token.split(':')[3]  == live_token.split(':')[3]:
-        kmsg('k3s_export-token', 'passwords different between live system and local token! exiting', 'err')
-        exit(0)
+        kabort('k3s_export-token', 'passwords different between live system and local token! exiting')
 
       # CA is different - expected on a new cluster
       kmsg('k3s_export-token', f'found: {token_name} updating CA')
@@ -260,8 +295,7 @@ def cluster_info():
 
   # check m1 id exists
   if not masterid in cluster_info_vms:
-    kmsg(kname, f'cluster {cluster_name} does not exist', 'err')
-    exit(0)
+    kabort('cluster_info', f'cluster {cluster_name} does not exist')
 
   kmsg(f'cluster_info', '', 'sys')
   curr_master = get_kube_vip_master()
