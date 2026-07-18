@@ -3,7 +3,7 @@
 # kopsrox
 from kopsrox_k3s import *
 
-# passed command
+# passed command
 cmd = sys.argv[2]
 kname = f'etcd_{cmd}'
 
@@ -27,7 +27,7 @@ except:
 # run k3s s3 command passed
 def s3_run(s3cmd):
 
-  # run the command ( 2>&1 required )
+  # run the command ( 2>&1 required )
   k3s_run = f'k3s etcd-snapshot {s3cmd} 2>&1'
   s3_out = qa_exec(masterid,k3s_run)
 
@@ -68,12 +68,12 @@ except:
   kmsg(f'{kname}-check', 'error getting data from s3 repo', 'err')
   exit(0)
 
-# s3 prune
+# s3 prune
 if cmd == 'prune':
   kmsg(f'{kname}-prune', (f'{s3_endpoint}/{bucket}\n' + s3_run('prune --name kopsrox')), 'sys')
   exit(0)
 
-# print s3List
+# print s3List
 def s3_list():
    kmsg('etcd_repo', f'{s3_endpoint}/{bucket}\n{snapshots}')
 
@@ -89,7 +89,7 @@ if cmd == 'snapshot':
         kmsg(kname, snap_out, 'sys')
         last_line = snap_out
 
-  # list snapshots
+  # list snapshots
   snapshots = list_snapshots()
   s3_list()
 
@@ -101,7 +101,7 @@ if cmd == 'list':
 # restore / list snapshots
 if cmd == 'restore' or cmd == 'restore-latest':
 
-  # restore snapshot
+  # restore snapshot
   snapshot = sys.argv[3]
 
   # check passed snapshot name exists
@@ -110,7 +110,7 @@ if cmd == 'restore' or cmd == 'restore-latest':
     s3_list()
     exit(0)
 
-  # info
+  # info
   kmsg(kname,f'restoring {snapshot}', 'sys')
   k3s_rm_cluster()
   clone(masterid)
@@ -119,10 +119,10 @@ if cmd == 'restore' or cmd == 'restore-latest':
   # delete extra nodes in the restored cluster
   nodes = kubectl('get nodes').split()
 
-  # for each of returned nodes from kubectl
+  # for each of returned nodes from kubectl
   for node in nodes:
 
-    # if matches cluster name and not master node
+    # if matches cluster name and not master node
     if re.search(f'{cluster_name}-', node) and (node != f'{cluster_name}-m1'):
       kmsg(kname, f'removing stale node {node}', 'sys')
 

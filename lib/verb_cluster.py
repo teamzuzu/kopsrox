@@ -3,7 +3,7 @@
 # functions
 from kopsrox_k3s import *
 
-# passed command
+# passed command
 cmd = sys.argv[2]
 
 # define kname
@@ -40,7 +40,7 @@ if cmd == 'restore':
 # create new cluster / master server
 if cmd == 'create':
 
-  # if masterid not found running
+  # if masterid not found running
   if not masterid in list_kopsrox_vm():
     kmsg(kname,f'{cluster_name} id {cluster_id} network {network_ip} m {masters} w {workers}', 'sys')
     clone(masterid)

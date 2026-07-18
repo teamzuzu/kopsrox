@@ -27,7 +27,7 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
   while qagent_running == 'false':
     try:
 
-      # qa ping the vm
+      # qa ping the vm
       qa_ping = prox.nodes(proxmox_node).qemu(vmid).agent.ping.post()
 
       # agent is running
@@ -35,7 +35,7 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
 
     # agent not running
     except:
-      # increment counter
+      # increment counter
       qagent_count += 1
 
       # exit if longer than 120 seconds - agent can be slow on first boot
@@ -43,7 +43,7 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
         kmsg(kname, f'agent not responding on {vmname} [{node}] cmd: {cmd}', 'err')
         exit(0)
 
-      # sleep 1 second then try again
+      # sleep 1 second then try again
       time.sleep(1)
 
       if qagent_count == 10:
@@ -59,7 +59,7 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
     print(qa_exec)
     exit(0)
 
-  # get pid
+  # get pid
   pid = qa_exec['pid']
   pid_status = int(0)
 
@@ -81,16 +81,16 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
     kmsg(kname, f'exit code 127: {pid} {cmd}', 'err')
     exit(0)
 
-  # check for err-data
+  # check for err-data
   try:
 
-    # if stderr / err-data exists
+    # if stderr / err-data exists
     if (pid_check['err-data']):
 
-      # print data warning \
+      # print data warning \
       kmsg('qa_exec_stderr', (cmd + '\n' + pid_check['err-data'].strip()), 'err')
 
-      # if there is output return that otherwise exit
+      # if there is output return that otherwise exit
       if (pid_check['err-data'] and pid_check['out-data']):
         return(pid_check['out-data'].strip())
       else:
@@ -98,9 +98,9 @@ def qa_exec(vmid: int = masterid,cmd = 'uptime', node: str = proxmox_node):
 
   except:
     try:
-      # this is where data gets returned for an OK command
+      # this is where data gets returned for an OK command
       if (pid_check['out-data']):
-        # return it minus any line break
+        # return it minus any line break
         return(pid_check['out-data'].strip())
     except:
       return('no output-' + cmd)
@@ -306,7 +306,7 @@ def prox_destroy(vmid: int):
 # clone
 def clone(vmid):
 
-  # check where this may called as a str
+  # check where this may called as a str
   vmid = int(vmid)
 
   # map network info
@@ -345,10 +345,10 @@ def clone(vmid):
   # configure the node via the guest agent
   node_prepare(vmid)
 
-# proxmox task blocker
+# proxmox task blocker
 def prox_task(task_id, node=proxmox_node):
 
-  # define default status
+  # define default status
   status = {"status": ""}
 
   # until task stopped
@@ -359,23 +359,23 @@ def prox_task(task_id, node=proxmox_node):
     kmsg('proxmox_task-status', f'unable to get task {task_id} node: {node}', 'err')
     exit(0)
 
-  # if task not completed ok
+  # if task not completed ok
   if not status["exitstatus"] == "OK":
     kmsg('proxmox_task-status', (f'task exited with non OK status ({status["exitstatus"]})\n' + task_log(task_id)), 'err')
     exit(0)
 
-# returns the task log
+# returns the task log
 def task_log(task_id, node=proxmox_node):
 
   # define empty log line
   logline = ''
 
-  # for each value in list
+  # for each value in list
   # assuming task_id is valid
   try:
     for log in prox.nodes(proxmox_node).tasks(task_id).log.get():
 
-      # append log to logline
+      # append log to logline
       logline += log['t'] + '\n'
 
     return(logline)

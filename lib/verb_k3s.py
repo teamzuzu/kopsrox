@@ -3,7 +3,7 @@
 # functions
 from kopsrox_k3s import * 
 
-# passed command
+# passed command
 cmd = sys.argv[2]
 
 # map arg if passed
@@ -19,7 +19,7 @@ kname = 'k3s_'+cmd
 if cmd == 'export-token':
   export_k3s_token()
 
-# export kubeconfig to file
+# export kubeconfig to file
 if cmd == 'kubeconfig':
   kubeconfig()
 
@@ -31,13 +31,13 @@ if cmd == 'check-config':
 if cmd == 'reload-kubevip':
   reload_kubevip()
 
-# kubectl
+# kubectl
 if cmd == 'kubectl':
 
-  # init kcmd
+  # init kcmd
   kcmd= ''
 
-  # convert command line into string
+  # convert command line into string
   for arg in sys.argv[1:]:
     if ' ' in arg:
 
@@ -48,7 +48,7 @@ if cmd == 'kubectl':
       # Assume no space => no quotes
       kcmd+="{} ".format(arg) ;
 
-  # remove first 2 commands
+  # remove first 2 commands
   kcmd = kcmd.replace('k3s kubectl ','')
 
   # run command and show output
