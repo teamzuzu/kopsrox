@@ -50,7 +50,7 @@ run `./kopsrox.py` and an example `kopsrox.ini` will be generated - edit it for 
 most values should hopefully be easy to work out :crossed_fingers: a few worth knowing about:
 
 - `oci_image` - the OCI image nodes are built from ( default `ubuntu:24.04` - other apt based images should work but are untested )
-- `cloudinituser` / `cloudinitpass` / `cloudinitsshkey` - the user created in every node ( via the guest agent - there's no actual cloud-init on microvm )
+- `localuser` / `localpass` / `localsshkey` - the user created in every node ( via the guest agent - there's no cloud-init on microvm )
 - `network_mtu` - applied inside each node - set to 1450 if using a proxmox sdn
 - `s3_*` - S3 credentials for etcd snapshots ( works great with cloudflare r2 / backblaze b2 / minio )
 

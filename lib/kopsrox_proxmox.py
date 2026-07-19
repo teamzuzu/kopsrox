@@ -219,11 +219,11 @@ WantedBy=multi-user.target
     qa_exec(vmid, 'resize2fs /dev/vda 2>/dev/null')
 
     # create user
-    qa_exec(vmid, f'useradd -m -s /bin/bash -G sudo {cloudinituser} 2>/dev/null; echo {cloudinituser}:{cloudinitpass} | chpasswd')
-    qa_exec(vmid, f'mkdir -p /home/{cloudinituser}/.ssh')
-    qa_write(vmid, f'/home/{cloudinituser}/.ssh/authorized_keys', f'{cloudinitsshkey}\n', '600')
-    qa_exec(vmid, f'chown -R {cloudinituser}:{cloudinituser} /home/{cloudinituser}/.ssh')
-    qa_write(vmid, f'/etc/sudoers.d/{cloudinituser}', f'{cloudinituser} ALL=(ALL) NOPASSWD:ALL\n', '440')
+    qa_exec(vmid, f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; echo {localuser}:{localpass} | chpasswd')
+    qa_exec(vmid, f'mkdir -p /home/{localuser}/.ssh')
+    qa_write(vmid, f'/home/{localuser}/.ssh/authorized_keys', f'{localsshkey}\n', '600')
+    qa_exec(vmid, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
+    qa_write(vmid, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
 
     # mark prepared and reboot into final state
     qa_exec(vmid, 'touch /etc/kopsrox-node-init-done')

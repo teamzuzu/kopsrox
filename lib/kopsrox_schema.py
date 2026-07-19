@@ -31,7 +31,7 @@ def check_vm_ram(kname, value):
 
 def check_sshkey(kname, value):
   if not value.startswith('ssh-'):
-    kabort(kname, f'[kopsrox]/cloudinitsshkey - invalid ssh key')
+    kabort(kname, f'[kopsrox]/localsshkey - invalid ssh key')
 
 def check_masters(kname, value):
   if not (value == 1 or value == 3):
@@ -63,9 +63,9 @@ SCHEMA = [
   opt('vm_disk', 'size of vm disk in Gib ', '20', kind = int, check = check_vm_disk),
   opt('vm_cpu', 'number of cpu cores ', '1', kind = int, check = check_vm_cpu),
   opt('vm_ram', 'amount of ram in Gib ', '2', kind = int, check = check_vm_ram),
-  opt('cloudinituser', 'username for the user created in each node ( via the guest agent )', 'user'),
-  opt('cloudinitpass', 'password for the created user', 'admin'),
-  opt('cloudinitsshkey', 'ssh public key for the created user ( required )', 'ssh-rsa cioieocieo', check = check_sshkey),
+  opt('localuser', 'username for the user created in each node ( via the guest agent )', 'user'),
+  opt('localpass', 'password for the created user', 'admin'),
+  opt('localsshkey', 'ssh public key for the created user ( required )', 'ssh-rsa cioieocieo', check = check_sshkey),
   opt('network_bridge', ['network bridge to use with kopsrox',
       'a proxmox sdn can be used by specifying the zone and vnet like this: sdn/zone/vnet'], 'vmbr0'),
   opt('network_ip', 'first ip of the ip range used for this kopsrox cluster', '192.168.0.160'),

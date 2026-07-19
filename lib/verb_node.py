@@ -38,13 +38,13 @@ if cmd not in ['utility']:
 
       # terminal 
       if cmd == 'terminal':
-        kmsg('node_terminal', f'root autologin on console - or u/p: {cloudinituser} / {cloudinitpass}', 'sys')
+        kmsg('node_terminal', f'root autologin on console - or u/p: {localuser} / {localpass}', 'sys')
         os.system(f'sudo qm terminal {vmid}')
         exit(0)
 
       # ssh command
       if cmd == 'ssh':
-        os.system(f'ssh -l {cloudinituser} {vmip(vmid)} -o StrictHostKeyChecking=no ')
+        os.system(f'ssh -l {localuser} {vmip(vmid)} -o StrictHostKeyChecking=no ')
         exit(0)
 
       # destroy vm
