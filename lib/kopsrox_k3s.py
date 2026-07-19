@@ -338,6 +338,6 @@ def get_kube_vip_master() -> str:
     kubevip_o = kubectl(kubevip_q)
     try:
         kubevip_m = kubevip_o.split()[5]
-    except:
+    except Exception:
         kubevip_m = ''
     return kubevip_m

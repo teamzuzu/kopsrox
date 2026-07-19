@@ -185,7 +185,7 @@ def init(verb: str, cmd: str) -> None:
         try:
             prox.nodes(vms[masterid]).qemu(masterid).agent.ping.post()
             g['conf_check_master_up'] = True
-        except:
+        except Exception:
             pass
 
     # image related config checks
@@ -208,14 +208,14 @@ def init(verb: str, cmd: str) -> None:
             if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
                 pvedaemon_hint = ' - restart pvedaemon after upgrading!' if microvm_installed < (0, 3, 20) else ''
                 kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ){pvedaemon_hint}', 'sys')
-        except:
+        except Exception:
             pass
 
         # template may not exist yet on image create
         try:
             template_data = prox.nodes(g['proxmox_node']).qemu(cluster_id).config.get()
             g['cloud_image_desc'] = template_data['description']
-        except:
+        except Exception:
             g['cloud_image_desc'] = ''
 
         # check configured bridge exists or is a sdn vnet - skipped when the cluster is already live
@@ -229,7 +229,7 @@ def init(verb: str, cmd: str) -> None:
                     sdn_params = network_bridge.split('/')
                     zone = sdn_params[1]
                     network_bridge = sdn_params[2]
-                except:
+                except Exception:
                     kabort(g['kname'], f'unable to parse sdn config: "{network_bridge}"')
 
                 # discover available sdn bridges

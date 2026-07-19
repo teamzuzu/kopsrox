@@ -53,7 +53,7 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
             try:
                 prox.nodes(node).qemu(vmid).agent.ping.post()
                 break
-            except:
+            except Exception:
                 time.sleep(1)
         else:
             kabort(kname, f'agent not responding on {vmname} [{node}] cmd: {safe_cmd}')
@@ -110,7 +110,7 @@ def qa_write(vmid: int, remote_path: str, content: str, mode: str = '644') -> No
     # get node for vm - fallback to configured node for new clones
     try:
         node = vms[vmid]
-    except:
+    except Exception:
         node = proxmox_node
 
     # pve api file-write content limit
@@ -129,7 +129,7 @@ def qa_write(vmid: int, remote_path: str, content: str, mode: str = '644') -> No
                 prox.nodes(node).qemu(vmid).agent('file-write').post(file = f'{remote_path}.kopsrox{count:03}', content = chunk)
             qa_exec(vmid, f'cat {remote_path}.kopsrox* > {remote_path} && rm -f {remote_path}.kopsrox*')
 
-    except:
+    except Exception:
         kabort(kname, f'unable to write {remote_path} to {vmnames[vmid]}')
 
     # set permissions
@@ -157,7 +157,7 @@ def node_reboot_wait(vmid: int) -> None:
             try:
                 if qa_exec(vmid, 'cat /proc/sys/kernel/random/boot_id') != boot_id:
                     break
-            except:
+            except Exception:
                 pass
         else:
             kabort(kname, f'{vmname} did not reboot')
@@ -348,7 +348,7 @@ def prox_task(task_id: str, node: str = proxmox_node, timeout: int = 600) -> Non
     # task type out of the upid for the live line
     try:
         task_type = task_id.split(':')[5]
-    except:
+    except Exception:
         task_type = str(task_id)
 
     # poll until task stopped
@@ -380,7 +380,7 @@ def task_log(task_id: str, node: str = proxmox_node) -> str:
     try:
         for log in prox.nodes(node).tasks(task_id).log.get():
             logline += log['t'] + '\n'
-    except:
+    except Exception:
         kmsg('proxmox_task-log', f'failed to get log for task {task_id}', 'sys')
 
     # return string

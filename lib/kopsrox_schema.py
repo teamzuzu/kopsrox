@@ -110,7 +110,7 @@ def validate(parser: ConfigParser) -> dict:
         if entry['kind'] is int:
             try:
                 raw = int(raw)
-            except:
+            except Exception:
                 kabort(kname, f'{name} should be numeric: {raw}')
 
         # option specific check
