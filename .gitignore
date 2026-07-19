@@ -7,3 +7,4 @@ lib/__pycache__/
 *.k3stoken
 *.kubeconfig
 kopsrox-image.log
+.baseline/
