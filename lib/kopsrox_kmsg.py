@@ -5,7 +5,7 @@
 # kplan()/kplan_tick() overall progress bar for compound verbs
 # degrades to plain sequential lines when stdout is not a tty ( NO_COLOR kills color )
 
-import sys, os, time, threading, atexit
+import sys, os, time, threading, atexit, shutil
 
 # ansi bits
 RESET = '\x1b[0m'
@@ -68,6 +68,25 @@ def fmt_line(sev, kname, msg):
     out += '\n  ' + line
   return out
 
+# clip a painted line to width visible chars - ansi sequences pass through
+# live lines must never wrap or clear_live cannot count the rows to clear
+def clip(line, width):
+  out = ''
+  vis = 0
+  i = 0
+  while i < len(line):
+    if line[i] == '\x1b':
+      end = line.find('m', i)
+      out += line[i:end + 1]
+      i = end + 1
+      continue
+    if vis == width:
+      return out + (RESET if COLOR_ON else '')
+    out += line[i]
+    vis += 1
+    i += 1
+  return out
+
 # wipe the live region - cursor ends at column 0 of its first line
 def clear_live():
   global LIVE
@@ -92,7 +111,8 @@ def draw_live():
     elapsed = paint(f'({fmt_secs(time.monotonic() - step.t0)})', 'cyan')
     lines.append(f"{paint(frame, 'cyan', True)} {paint(name, 'cyan')}{pad}{step.msg} {elapsed}")
   if lines:
-    sys.stdout.write('\n'.join(lines))
+    width = shutil.get_terminal_size().columns
+    sys.stdout.write('\n'.join(clip(line, width - 1) for line in lines))
     LIVE = len(lines)
   sys.stdout.flush()
 

@@ -6,6 +6,18 @@
 
 import sys, os, time, subprocess
 
+# wrap child mode - long live line in a narrow pty ( see scroll regression below )
+if os.environ.get('KMSG_CHILD') == 'wrap':
+  sys.path[0:0] = ['lib/']
+  os.environ.pop('COLUMNS', None)
+  os.environ.pop('LINES', None)
+  from kopsrox_kmsg import kstep, kplan
+  time.sleep(0.2)
+  kplan(4, 'wrap test plan')
+  with kstep('wrap_step', 'x' * 120):
+    time.sleep(0.6)
+  exit(0)
+
 # child mode - emit through the real module with piped stdout
 if os.environ.get('KMSG_CHILD'):
   sys.path[0:0] = ['lib/']
@@ -45,6 +57,53 @@ assert 'test:quiet' not in out, 'quiet step printed in non-tty: ' + out
 run = subprocess.run([sys.executable, __file__, 'abort'], env = env, capture_output = True, text = True)
 assert run.returncode == 1, f'kabort should exit 1 - got {run.returncode}'
 assert '✗ test:abort' in run.stdout, run.stdout
+
+# scroll regression - a live line wider than the terminal must not creep down
+# the screen ( clear_live counts logical lines so live lines must never wrap )
+import pty, fcntl, termios, struct
+WIDTH = 60
+pid, fd = pty.fork()
+if pid == 0:
+  os.environ['KMSG_CHILD'] = 'wrap'
+  os.execvp(sys.executable, [sys.executable, __file__])
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, WIDTH, 0, 0))
+data = b''
+while True:
+  try:
+    chunk = os.read(fd, 65536)
+  except OSError:
+    break
+  if not chunk:
+    break
+  data += chunk
+os.waitpid(pid, 0)
+
+# minimal terminal sim - track how far down the cursor travels
+row = col = maxrow = i = 0
+text = data.decode(errors = 'replace')
+while i < len(text):
+  ch = text[i]
+  if ch == '\x1b' and text[i + 1:i + 2] == '[':
+    j = i + 2
+    while j < len(text) and not text[j].isalpha():
+      j += 1
+    if text[j] == 'A':
+      row = max(0, row - int(text[i + 2:j] or 1))
+    i = j + 1
+    continue
+  if ch == '\r':
+    col = 0
+  elif ch == '\n':
+    row += 1
+    col = 0
+  elif ch != '\x1b':
+    col += 1
+    if col >= WIDTH:
+      row += 1
+      col = 0
+  maxrow = max(maxrow, row)
+  i += 1
+assert maxrow <= 3, f'live region scrolled down {maxrow} rows in a {WIDTH} col pty'
 
 print('kmsg tests OK')
 
