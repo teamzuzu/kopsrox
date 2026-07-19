@@ -14,8 +14,11 @@ def qa_exec(vmid: int = masterid, cmd = 'uptime', node: str = proxmox_node, time
   vmname = vmnames[vmid]
   node = vms.get(vmid, node)
 
+  # display copy of the command - never show k3s tokens on screen
+  safe_cmd = re.sub(r'K10\S+', '<token>', cmd)
+
   # short command for the live line
-  short_cmd = cmd if len(cmd) <= 60 else cmd[:57] + '...'
+  short_cmd = safe_cmd if len(safe_cmd) <= 60 else safe_cmd[:57] + '...'
 
   with kstep(kname, f'{vmname} waiting for agent', quiet = True) as step:
 
@@ -27,7 +30,7 @@ def qa_exec(vmid: int = masterid, cmd = 'uptime', node: str = proxmox_node, time
       except:
         time.sleep(1)
     else:
-      kabort(kname, f'agent not responding on {vmname} [{node}] cmd: {cmd}')
+      kabort(kname, f'agent not responding on {vmname} [{node}] cmd: {safe_cmd}')
 
     # agent is up - show the command while it runs
     step.msg = f'{vmname} {short_cmd}'
@@ -36,7 +39,7 @@ def qa_exec(vmid: int = masterid, cmd = 'uptime', node: str = proxmox_node, time
     try:
       exec_ret = prox.nodes(node).qemu(vmid).agent.exec.post(command = "bash -c '" + cmd + "'")
     except Exception as e:
-      kabort(kname, f'problem running cmd: {cmd}\n{e}')
+      kabort(kname, f'problem running cmd: {safe_cmd}\n{e}')
 
     # poll until the command exits
     pid = exec_ret['pid']
@@ -45,24 +48,24 @@ def qa_exec(vmid: int = masterid, cmd = 'uptime', node: str = proxmox_node, time
       try:
         pid_check = prox.nodes(node).qemu(vmid).agent('exec-status').get(pid = pid)
       except Exception as e:
-        kabort(kname, f'problem with pid: {pid} {cmd}\n{e}')
+        kabort(kname, f'problem with pid: {pid} {safe_cmd}\n{e}')
       if pid_check['exited'] == 1:
         break
       time.sleep(0.5)
       waited += 0.5
       if waited >= timeout:
-        kabort(kname, f'timed out after {timeout}s on {vmname}: {cmd}')
+        kabort(kname, f'timed out after {timeout}s on {vmname}: {safe_cmd}')
 
   # check for exitcode 127
   if int(pid_check['exitcode']) == 127:
-    kabort(kname, f'exit code 127: {pid} {cmd}')
+    kabort(kname, f'exit code 127: {pid} {safe_cmd}')
 
   out = (pid_check.get('out-data') or '').strip()
   err = (pid_check.get('err-data') or '').strip()
 
   # stderr - report and return stdout if there is any
   if err:
-    kmsg('proxmox_qa-stderr', f'{cmd}\n{err}', 'err')
+    kmsg('proxmox_qa-stderr', f'{safe_cmd}\n{err}', 'err')
     if out:
       return out
     exit(1)

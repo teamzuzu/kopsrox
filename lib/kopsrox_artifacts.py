@@ -98,7 +98,7 @@ exit
 fi
 
 if [[ "$1" == "latest" ]] then
-{k3s_master} $token_command && /usr/local/bin/k3s etcd-snapshot ls 2>&1 && systemctl stop k3s && rm -rf /var/lib/rancher
+{k3s_master} $token_command > /k3s_latest_install.log 2>&1 && /usr/local/bin/k3s etcd-snapshot ls 2>&1 && systemctl stop k3s && rm -rf /var/lib/rancher
 exit
 fi
 
