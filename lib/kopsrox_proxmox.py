@@ -384,7 +384,7 @@ def task_log(task_id: str, node: str = proxmox_node) -> str:
         kmsg('proxmox_task-log', f'failed to get log for task {task_id}', 'sys')
 
     # return string
-    return (logline)
+    return logline
 
 # internet checker
 def internet_check(vmid: int) -> None:

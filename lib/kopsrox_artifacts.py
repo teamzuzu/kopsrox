@@ -40,7 +40,7 @@ spec:
     # - the guest has no dmi so the ccm smbios uuid check can never pass
     # - the csi driver needs disk hotplug which pve-microvm does not support yet
     # storage is provided by the k3s local-path provisioner instead
-    return (manifest)
+    return manifest
 
 # k3s server config file ( /etc/rancher/k3s/config.yaml )
 def k3s_server_config() -> str:
@@ -69,7 +69,7 @@ etcd-snapshot-compress: true'''
     if region_string != '':
         server_config += f'''
 etcd-s3-region: {region_string}'''
-    return (server_config)
+    return server_config
 
 # in-node k3s install script ( /root/scripts/kopsrox.sh )
 def kopsrox_sh() -> str:
@@ -79,7 +79,7 @@ def kopsrox_sh() -> str:
     k3s_master = f'{k3s_ver} sh -s - server --cluster-init {k3s_opt}'
     k3s_slave = f'{k3s_ver} sh -s - server {k3s_server} {k3s_opt}'
     k3s_worker = f'rm -rf /etc/rancher/k3s/* && {k3s_ver} sh -s - agent {k3s_server} {k3s_opt}'
-    return (f'''\
+    return f'''\
 #!/usr/bin/env bash
 if [[ ! "$1" ]] then
 echo 'command not passed'
@@ -119,4 +119,4 @@ if [[ "$1" == "restore" ]] then
 exit
 fi
 
-''')
+'''
