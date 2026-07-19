@@ -79,7 +79,7 @@ if not [r for r in resources if r.get('type') == 'storage' and r.get('node') == 
 disc_vms = {int(r['vmid']): r for r in resources
             if r.get('type') == 'qemu' and cluster_id <= int(r['vmid']) < cluster_id + 10}
 
-# vms var used in other code now and needs renaming
+# map of kopsrox vmid -> proxmox node
 vms = {vmid: disc_vms[vmid].get('node') for vmid in sorted(disc_vms)}
 
 # check the image exists - image create builds it so skips the check

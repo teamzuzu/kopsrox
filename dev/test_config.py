@@ -47,6 +47,7 @@ assert values['masters'] == 1 and type(values['masters']) is int
 assert values['region'] == '', 'commented s3_region should fall back to empty'
 assert values['access_key'] == 'e3898d39d39id93', 'hyphenated ini name must map to access_key'
 assert values['microvm_kernel'] == '/usr/share/pve-microvm/vmlinuz-kopsrox'
+assert values['microvm_initrd'] == '/usr/share/pve-microvm/initrd-kopsrox'
 assert values['extra_packages'] == 'nfs-common'
 
 # every SCHEMA var is a valid python identifier ( they become module globals )
