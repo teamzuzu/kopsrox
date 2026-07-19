@@ -6,17 +6,12 @@ from kopsrox_proxmox import *
 # check for k3s status
 def k3s_check(vmid: int):
 
-  # test call
-  try:
-    get_node = kubectl('get node ' + vmnames[vmid])
-  except:
-    return False
+  # quiet probe - kubectl may not be installed yet so never fail the exec ( || true )
+  get_node = qa_exec(masterid, f'/usr/local/bin/kubectl get node {vmnames[vmid]} 2>&1 || true')
 
   # return true if Ready
   # word boundary as NotReady also contains Ready
-  if re.search(r'\bReady\b', get_node):
-    return True
-  return False
+  return bool(re.search(r'\bReady\b', get_node))
 
 # create a master/slave/worker
 def k3s_init_node(vmid: int = masterid, nodetype = 'master', snapshot = 'kopsrox'):
