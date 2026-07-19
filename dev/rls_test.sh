@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# bash only - the ERR trap and [[ ]] below break silently under plain sh
+[ -n "$BASH_VERSION" ] || exec bash "$0" "$@"
+
 start_time=$(date +%s)
 
 # kopsrox aliases
@@ -19,7 +22,6 @@ KE="$K etcd"
 KEL="$KE list"
 KES="$KE snapshot"
 KER="$KE restore"
-KERL="${KER}-latest"
 
 # change kopsrox config item
 kc() {
@@ -86,7 +88,11 @@ phase "etcd snapshot + restore 📸"
 run "etcd snapshot" $KES
 run "cluster destroy" $KCD
 run "cluster create" $KCC
-run "etcd restore-latest" $KERL
+# restore the newest snapshot - name parsed from the etcd list output
+current_step="parse latest etcd snapshot"
+latest=$($KEL | awk '/^  kopsrox-/ {print $1}' | sort | tail -1)
+[[ -n $latest ]]
+run "etcd restore $latest" $KER "$latest"
 
 phase "worker scaling 👷"
 kc workers 1 ; run "scale workers 0 -> 1" $KCU

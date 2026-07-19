@@ -95,7 +95,7 @@ if cmd == 'list':
   exit(0)
 
 # restore / list snapshots
-if cmd == 'restore' or cmd == 'restore-latest':
+if cmd == 'restore':
 
   # restore snapshot
   snapshot = sys.argv[3]

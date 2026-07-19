@@ -75,39 +75,27 @@ def cmds_help(verb):
     else:
       print(f'- {verb_cmd}')
 
-# handle verb parameter
-try:
-
-  # check for 1st argument
-  if sys.argv[1]:
-
-    # map 1st arg to verb
-    verb = sys.argv[1]
-
-    # if verb not found in cmds dict
-    if not verb in verbs:
-      exit(0)
-
-# verb not found or passed
-except:
+# no verb passed - print help
+if len(sys.argv) < 2:
   verbs_help()
   exit(0)
+verb = sys.argv[1]
 
-# handle command
-try:
+# unknown verb is an error
+if verb not in verbs:
+  verbs_help()
+  exit(1)
 
-  # 2nd arg = cmd
-  if sys.argv[2]:
-    cmd = sys.argv[2]
-
-    # if cmd not in list of commands
-    if not cmd in list(cmds[verb]):
-      exit()
-
-# cmd not found
-except:
+# no command passed - print the verb help
+if len(sys.argv) < 3:
   cmds_help(verb)
-  exit()
+  exit(0)
+cmd = sys.argv[2]
+
+# unknown command is an error
+if cmd not in cmds[verb]:
+  cmds_help(verb)
+  exit(1)
 
 # handle commands with required args eg 'node ssh hostname'
 try:
@@ -115,7 +103,7 @@ try:
     pass
 except:
   kmsg(f'kopsrox_{verb}', f'{cmd} [{cmds[verb][cmd]}]')
-  exit(0)
+  exit(1)
 
 # run passed verb
 exec_verb = __import__('verb_' + verb)
