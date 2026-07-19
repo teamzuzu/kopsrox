@@ -18,6 +18,23 @@ if os.environ.get('KMSG_CHILD') == 'wrap':
     time.sleep(0.6)
   exit(0)
 
+# raw child mode - tty in raw mode like sudo use_pty leaves it during image builds
+if os.environ.get('KMSG_CHILD') == 'raw':
+  sys.path[0:0] = ['lib/']
+  os.environ.pop('COLUMNS', None)
+  os.environ.pop('LINES', None)
+  import termios as t
+  attrs = t.tcgetattr(1)
+  attrs[1] &= ~t.OPOST
+  t.tcsetattr(1, t.TCSANOW, attrs)
+  from kopsrox_kmsg import kmsg, kstep, kplan
+  time.sleep(0.2)
+  kmsg('raw_head', 'header line', 'sys')
+  kplan(4, 'raw test plan')
+  with kstep('raw_step', 'step under raw tty'):
+    time.sleep(0.8)
+  exit(0)
+
 # child mode - emit through the real module with piped stdout
 if os.environ.get('KMSG_CHILD'):
   sys.path[0:0] = ['lib/']
@@ -58,52 +75,64 @@ run = subprocess.run([sys.executable, __file__, 'abort'], env = env, capture_out
 assert run.returncode == 1, f'kabort should exit 1 - got {run.returncode}'
 assert '✗ test:abort' in run.stdout, run.stdout
 
-# scroll regression - a live line wider than the terminal must not creep down
-# the screen ( clear_live counts logical lines so live lines must never wrap )
+# scroll regressions - the live region must never creep down the screen
+# wrap: lines wider than the terminal ( clear_live counts logical lines )
+# raw: sudo use_pty flips the tty to raw mode during image builds - no ONLCR
+#      so a bare \n no longer implies carriage return
 import pty, fcntl, termios, struct
 WIDTH = 60
-pid, fd = pty.fork()
-if pid == 0:
-  os.environ['KMSG_CHILD'] = 'wrap'
-  os.execvp(sys.executable, [sys.executable, __file__])
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, WIDTH, 0, 0))
-data = b''
-while True:
-  try:
-    chunk = os.read(fd, 65536)
-  except OSError:
-    break
-  if not chunk:
-    break
-  data += chunk
-os.waitpid(pid, 0)
 
-# minimal terminal sim - track how far down the cursor travels
-row = col = maxrow = i = 0
-text = data.decode(errors = 'replace')
-while i < len(text):
-  ch = text[i]
-  if ch == '\x1b' and text[i + 1:i + 2] == '[':
-    j = i + 2
-    while j < len(text) and not text[j].isalpha():
-      j += 1
-    if text[j] == 'A':
-      row = max(0, row - int(text[i + 2:j] or 1))
-    i = j + 1
-    continue
-  if ch == '\r':
-    col = 0
-  elif ch == '\n':
-    row += 1
-    col = 0
-  elif ch != '\x1b':
-    col += 1
-    if col >= WIDTH:
-      row += 1
+def pty_run(mode):
+  pid, fd = pty.fork()
+  if pid == 0:
+    os.environ['KMSG_CHILD'] = mode
+    os.execvp(sys.executable, [sys.executable, __file__])
+  fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, WIDTH, 0, 0))
+  data = b''
+  while True:
+    try:
+      chunk = os.read(fd, 65536)
+    except OSError:
+      break
+    if not chunk:
+      break
+    data += chunk
+  os.waitpid(pid, 0)
+  return data.decode(errors = 'replace')
+
+# minimal terminal sim - how far down does the cursor travel
+# lf_resets_col False models a raw mode tty where \n does not return the carriage
+def max_row(text, lf_resets_col = True):
+  row = col = maxrow = i = 0
+  while i < len(text):
+    ch = text[i]
+    if ch == '\x1b' and text[i + 1:i + 2] == '[':
+      j = i + 2
+      while j < len(text) and not text[j].isalpha():
+        j += 1
+      if text[j] == 'A':
+        row = max(0, row - int(text[i + 2:j] or 1))
+      i = j + 1
+      continue
+    if ch == '\r':
       col = 0
-  maxrow = max(maxrow, row)
-  i += 1
-assert maxrow <= 3, f'live region scrolled down {maxrow} rows in a {WIDTH} col pty'
+    elif ch == '\n':
+      row += 1
+      if lf_resets_col:
+        col = 0
+    elif ch != '\x1b':
+      col += 1
+      if col >= WIDTH:
+        row += 1
+        col = 0
+    maxrow = max(maxrow, row)
+    i += 1
+  return maxrow
+
+rows = max_row(pty_run('wrap'))
+assert rows <= 3, f'wrap: live region scrolled down {rows} rows in a {WIDTH} col pty'
+rows = max_row(pty_run('raw'), lf_resets_col = False)
+assert rows <= 4, f'raw tty: live region scrolled down {rows} rows in a {WIDTH} col pty'
 
 print('kmsg tests OK')
 

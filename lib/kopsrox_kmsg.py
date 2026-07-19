@@ -112,7 +112,9 @@ def draw_live():
     lines.append(f"{paint(frame, 'cyan', True)} {paint(name, 'cyan')}{pad}{step.msg} {elapsed}")
   if lines:
     width = shutil.get_terminal_size().columns
-    sys.stdout.write('\n'.join(clip(line, width - 1) for line in lines))
+    # explicit \r\n - sudo use_pty flips the shared tty to raw mode while image
+    # builds run and a bare \n stops implying carriage return ( no ONLCR )
+    sys.stdout.write('\r\n'.join(clip(line, width - 1) for line in lines))
     LIVE = len(lines)
   sys.stdout.flush()
 
@@ -121,9 +123,10 @@ def emit(text):
   with LOCK:
     if TTY:
       clear_live()
-    sys.stdout.write(text + '\n')
-    if TTY:
+      sys.stdout.write(text.replace('\n', '\r\n') + '\r\n')
       draw_live()
+    else:
+      sys.stdout.write(text + '\n')
     sys.stdout.flush()
 
 # render thread - animates spinner + elapsed while anything is live
