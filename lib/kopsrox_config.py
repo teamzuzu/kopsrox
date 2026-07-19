@@ -117,10 +117,12 @@ if passed_cmd == 'image':
     kabort(kname, f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.19 or later')
 
   # notify if upstream has a newer release - skip quietly if offline
+  # 0.3.20+ postinst restarts pvedaemon itself so only warn on older installs
   try:
     microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
     if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
-      kmsg(kname, f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ) - restart pvedaemon after upgrading!', 'sys')
+      pvedaemon_hint = ' - restart pvedaemon after upgrading!' if microvm_installed < (0, 3, 20) else ''
+      kmsg(kname, f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ){pvedaemon_hint}', 'sys')
   except:
     pass
 
