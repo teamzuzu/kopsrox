@@ -11,62 +11,37 @@ import re,os,sys,subprocess,time,base64
 # kmsg
 from kopsrox_kmsg import kmsg, kabort, kstep, kplan, kplan_tick
 
-# read ini file into config
+# read and validate kopsrox.ini against the schema - injects every option
+# as a module global ( see SCHEMA in kopsrox_schema.py for the names )
 from configparser import ConfigParser
+from kopsrox_schema import validate
 kopsrox_config = ConfigParser()
 kopsrox_config.read('kopsrox.ini')
-config = ({s:dict(kopsrox_config.items(s)) for s in kopsrox_config.sections()})
+globals().update(validate(kopsrox_config))
 
-# kname
-kname='config_check'
-passed_cmd = sys.argv[1]
-
-# check section and value exists in kopsrox.ini
-def conf_check(value: str = 'kopsrox'):
-
-  # check option exists
-  if not kopsrox_config.has_option('kopsrox', value):
-    kabort(kname, f'{value} is missing in kopsrox.ini')
-
-  # define config_item
-  config_item = kopsrox_config.get('kopsrox', value)
-
-  # check value is not blank - some values may be
-  if config_item == '' and value not in ['extra_packages', 's3_region']:
-    kabort(kname, f'{value} - a value is required')
-
-  # int check
-  if value in ['proxmox_api_port', 'vm_cpu', 'vm_ram', 'vm_disk', 'cluster_id', 'workers', 'masters', 'network_mtu']:
-    try:
-      return int(config_item)
-    except:
-      kabort(kname, f'{value} should be numeric: {config_item}')
-
-  # return string
-  return str(config_item)
-
-# cluster name
-cluster_name = conf_check('cluster_name')
+# kname and the verb being run
 kname = f'{cluster_name}_config-check'
-
-# cluster id
-cluster_id = conf_check('cluster_id')
-if cluster_id < 100:
-  kabort(kname, f'cluster_id is too low - should be over 100')
+passed_cmd = sys.argv[1]
 
 # assign master id
 masterid = int(cluster_id) + 1
 
-# proxmox endpoint
-proxmox_endpoint = conf_check('proxmox_endpoint')
-if ( proxmox_endpoint == "localhost" or proxmox_endpoint == "127.0.0.1" ):
-  kabort(kname, f'proxmox_endpoint cannot be localhost - please use a reachable IP')
+# variables for network and its IP for vmip function
+network_octs = network_ip.split('.')
+network_base = f'{network_octs[0]}.{network_octs[1]}.{network_octs[2]}.'
+network_ip_prefix = int(network_octs[-1])
 
-# proxmox vars
-proxmox_user = conf_check('proxmox_user')
-proxmox_token_name = conf_check('proxmox_token_name')
-proxmox_api_port = conf_check('proxmox_api_port')
-proxmox_token_value = conf_check('proxmox_token_value')
+# region optional
+region_string = ''
+if region:
+  region_string = region
+
+# define vmnames
+suffixes = ['-i0', '-m1', '-m2', '-m3', '-u1', '-w1', '-w2', '-w3', '-w4', '-w5']
+vmnames = {
+  cluster_id + i: f"{cluster_name}{suffix}"
+  for i, suffix in enumerate(suffixes)
+}
 
 # test connection to proxmox
 try:
@@ -85,35 +60,52 @@ try:
 except Exception as e:
   kabort(kname, f'API connection to proxmox failed check proxmox settings\n{e}')
 
+# discover cluster state - one call covers nodes, storage, vms and the image
+try:
+  resources = prox.cluster.resources.get()
+except Exception as e:
+  kabort(kname, f'unable to list cluster resources\n{e}')
+
 # map node name
-proxmox_node = conf_check('proxmox_node')
-disc_nodes = [node.get('node', None) for node in prox.nodes.get()]
+disc_nodes = [r.get('node') for r in resources if r.get('type') == 'node']
 if proxmox_node not in disc_nodes:
   kabort(kname, f'"{proxmox_node}" not found - discovered nodes: {disc_nodes}')
 
-# try k8s ping
-conf_check_master_up = False
-try:
-  k3s_ping = prox.nodes(proxmox_node).qemu(masterid).agent.exec.post(command = '/usr/local/bin/k3s kubectl version')
-  conf_check_master_up = True
+# storage
+if not [r for r in resources if r.get('type') == 'storage' and r.get('node') == proxmox_node and r.get('storage') == proxmox_storage]:
+  kabort(kname, f'{proxmox_storage} storage not found')
 
-except:
+# kopsrox vms in the cluster id range - full resource entries kept for status/name
+disc_vms = {int(r['vmid']): r for r in resources
+            if r.get('type') == 'qemu' and cluster_id <= int(r['vmid']) < cluster_id + 10}
+
+# vms var used in other code now and needs renaming
+vms = {vmid: disc_vms[vmid].get('node') for vmid in sorted(disc_vms)}
+
+# check the image exists - image create builds it so skips the check
+if not (passed_cmd == 'image' and sys.argv[2:3] == ['create']):
+  if cluster_id not in vms:
+    kabort(kname, f'{cluster_name} image not found - please run "kopsrox image create"')
+
+# guest verbs power on any stopped node
+if passed_cmd in ['cluster', 'k3s', 'etcd', 'node']:
+  for vmid in vms:
+    if vmid != cluster_id and disc_vms[vmid].get('status') == 'stopped':
+      kmsg(kname, f'powering on {disc_vms[vmid].get("name")}', 'sys')
+      prox.nodes(vms[vmid]).qemu(vmid).status.start.post()
+
+# master reachable? agent ping only - consumed by the image bridge gate and cluster plan totals
+# an agent-alive proxy for k3s-alive: cluster_plan_total can over-count one export unit, the bar clamps
+conf_check_master_up = False
+if passed_cmd in ['image', 'cluster'] and disc_vms.get(masterid, {}).get('status') == 'running':
   try:
-    qa_ping = prox.nodes(proxmox_node).qemu(masterid).agent.ping.post()
-    kmsg(kname, f'k3s down but master server available...?', 'sys')
+    prox.nodes(vms[masterid]).qemu(masterid).agent.ping.post()
+    conf_check_master_up = True
   except:
     pass
 
-# storage
-proxmox_storage = conf_check('proxmox_storage')
-if not prox.nodes(proxmox_node).storage.get(storage = proxmox_storage):
-  kabort(kname, f'{proxmox_storage} storage not found')
-
 # image related config checks
 if passed_cmd == 'image':
-
-  # oci image used to build the microvm template
-  oci_image = conf_check('oci_image')
 
   # pve-microvm version checks
   # kopsrox needs 0.3.19+ ( qm shutdown fix and the template layout we patch )
@@ -132,10 +124,6 @@ if passed_cmd == 'image':
   except:
     pass
 
-  # kopsrox microvm kernel/initrd - optional overrides
-  microvm_kernel = kopsrox_config.get('kopsrox', 'microvm_kernel', fallback='/usr/share/pve-microvm/vmlinuz-kopsrox')
-  microvm_initrd = kopsrox_config.get('kopsrox', 'microvm_initrd', fallback='/usr/share/pve-microvm/initrd-kopsrox')
-
   # template may not exist yet on image create
   try:
     template_data = prox.nodes(proxmox_node).qemu(cluster_id).config.get()
@@ -143,73 +131,25 @@ if passed_cmd == 'image':
   except:
     cloud_image_desc = ''
 
-# vm disk
-vm_disk = conf_check('vm_disk')
-if vm_disk < 20:
-  kabort(kname, f'vm_ - kopsrox vms need 20G disk')
+  # check configured bridge exists or is a sdn vnet - skipped when the cluster is already live
+  if not conf_check_master_up:
+    if not re.search('sdn/', network_bridge):
+      discovered_bridges = [bridge.get('iface', None) for bridge in prox.nodes(proxmox_node).network.get(type = 'bridge')]
+    else:
+      # check we can map zone and get vnets
+      try:
+        sdn_params = network_bridge.split('/')
+        zone = sdn_params[1]
+        network_bridge = sdn_params[2]
+      except:
+        kabort(kname, f'unable to parse sdn config: "{network_bridge}"')
 
-# vm cpu
-vm_cpu = conf_check('vm_cpu')
-if vm_disk < 1:
-  kabort(kname, f'vm_ - kopsrox vms at least 1 cpu')
+      # discover available sdn bridges
+      discovered_bridges = [bridge.get('vnet', None) for bridge in prox.nodes(proxmox_node).sdn.zones(zone).content.get()]
 
-# ram size check
-vm_ram = conf_check('vm_ram')
-if vm_ram < 2:
-  kabort(kname, f'vm_ram - kopsrox vms need 2G RAM')
-
-# cloudinit
-cloudinituser = conf_check('cloudinituser')
-cloudinitpass = conf_check('cloudinitpass')
-cloudinitsshkey = conf_check('cloudinitsshkey')
-if not cloudinitsshkey.startswith('ssh-'):
-  kabort(kname, f'[kopsrox]/cloudinitsshkey - invalid ssh key')
-
-# extra packages installed into each node at init
-extra_packages = conf_check('extra_packages')
-
-# network
-network_ip = conf_check('network_ip')
-network_gw = conf_check('network_gw')
-network_mask = conf_check('network_mask')
-network_dns = conf_check('network_dns')
-network_bridge = conf_check('network_bridge')
-network_mtu = conf_check('network_mtu')
-
-# variables for network and its IP for vmip function
-network_octs = network_ip.split('.')
-network_base = f'{network_octs[0]}.{network_octs[1]}.{network_octs[2]}.'
-network_ip_prefix = int(network_octs[-1])
-
-# master + check
-masters = conf_check('masters')
-if not (masters == 1 or masters == 3):
-  kabort(kname, f'[cluster] - masters: only 1 or 3 masters supported. You have: {masters}')
-
-# workers
-workers = conf_check('workers')
-
-# k3s version
-k3s_version = conf_check('k3s_version')
-
-# s3 stuff
-region = conf_check('s3_region')
-s3_endpoint = conf_check('s3_endpoint')
-access_key = conf_check('s3_access-key')
-access_secret = conf_check('s3_access-secret')
-bucket = conf_check('s3_bucket')
-
-# region optional
-region_string = ''
-if region:
-  region_string = region
-
-# define vmnames
-suffixes = ['-i0', '-m1', '-m2', '-m3', '-u1', '-w1', '-w2', '-w3', '-w4', '-w5']
-vmnames = {
-  cluster_id + i: f"{cluster_name}{suffix}"
-  for i, suffix in enumerate(suffixes)
-}
+    # check configured bridge is in list
+    if network_bridge not in discovered_bridges:
+      kabort(kname, f'"{network_bridge}" not found. valid bridges: {discovered_bridges}')
 
 # look up kopsrox_img name
 def kopsrox_img():
@@ -246,53 +186,6 @@ def list_kopsrox_vm():
 
   # return sorted dict
   return(dict(sorted(vmids.items())))
-
-
-# check configured bridge exists or is a sdn vnet
-# configured bridge does not contain the string 'sdn/'
-if passed_cmd == 'image' and not conf_check_master_up:
-  if not re.search('sdn/', network_bridge):
-    discovered_bridges = [bridge.get('iface', None) for bridge in prox.nodes(proxmox_node).network.get(type = 'bridge')]
-  else:
-    # check we can map zone and get vnets
-    try:
-      sdn_params = network_bridge.split('/')
-      zone = sdn_params[1]
-      network_bridge = sdn_params[2]
-    except:
-      kabort(kname, f'unable to parse sdn config: "{network_bridge}"')
-
-    # discover available sdn bridges
-    discovered_bridges = [bridge.get('vnet', None) for bridge in prox.nodes(proxmox_node).sdn.zones(zone).content.get()]
-
-  # check configured bridge is in list
-  if network_bridge not in discovered_bridges:
-    kabort(kname, f'"{network_bridge}" not found. valid bridges: {discovered_bridges}')
-
-# check the image exists - image create builds it so skips the check
-if not (sys.argv[1] == 'image' and sys.argv[2:3] == ['create']):
-  try:
-    img_found = kopsrox_img()
-  except:
-    img_found = False
-  if not img_found:
-    kabort(kname, f'{cluster_name} image not found - please run "kopsrox image create"')
-
-# vm not powered on check
-# vms var used in other code now and needs renaming
-vms = list_kopsrox_vm()
-for vmid in vms:
-
-  # skip image
-  if vmid != cluster_id:
-
-    # get vminfo
-    vmi = prox.nodes(proxmox_node).qemu(vmid).status.current.get()
-
-    # start stopped nodes
-    if vmi['status'] == 'stopped':
-      kmsg(kname, f'powering on {vmi["name"]}', 'sys')
-      prox.nodes(proxmox_node).qemu(vmid).status.start.post()
 
 # get token if it exists
 def get_k3s_token():
