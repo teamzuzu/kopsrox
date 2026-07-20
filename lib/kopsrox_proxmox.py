@@ -31,10 +31,18 @@ from kopsrox_kmsg import kabort, kmsg, kplan_tick, kstep
 
 
 # run a exec via qemu-agent
-def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node, timeout: int = 600) -> str:
+# fatal = False turns every failure into an empty return instead of kabort -
+# for probes that poll while the agent may legitimately be down ( eg mid reboot )
+def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node, timeout: int = 600, fatal: bool = True) -> str:
 
     # define kname
     kname = 'proxmox_qa-exec'
+
+    # abort or return empty depending on fatal
+    def fail(msg: str) -> str:
+        if fatal:
+            kabort(kname, msg)
+        return ''
 
     # get vmname and the node the vm actually runs on
     vmname = vmnames[vmid]
@@ -56,7 +64,7 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
             except Exception:
                 time.sleep(1)
         else:
-            kabort(kname, f'agent not responding on {vmname} [{node}] cmd: {safe_cmd}')
+            return fail(f'agent not responding on {vmname} [{node}] cmd: {safe_cmd}')
 
         # agent is up - show the command while it runs
         step.msg = f'{vmname} {short_cmd}'
@@ -65,7 +73,7 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
         try:
             exec_ret = prox.nodes(node).qemu(vmid).agent.exec.post(command = "bash -c '" + cmd + "'")
         except Exception as e:
-            kabort(kname, f'problem running cmd: {safe_cmd}\n{e}')
+            return fail(f'problem running cmd: {safe_cmd}\n{e}')
 
         # poll until the command exits
         pid = exec_ret['pid']
@@ -74,23 +82,25 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
             try:
                 pid_check = prox.nodes(node).qemu(vmid).agent('exec-status').get(pid = pid)
             except Exception as e:
-                kabort(kname, f'problem with pid: {pid} {safe_cmd}\n{e}')
+                return fail(f'problem with pid: {pid} {safe_cmd}\n{e}')
             if pid_check['exited'] == 1:
                 break
             time.sleep(0.5)
             waited += 0.5
             if waited >= timeout:
-                kabort(kname, f'timed out after {timeout}s on {vmname}: {safe_cmd}')
+                return fail(f'timed out after {timeout}s on {vmname}: {safe_cmd}')
 
     # check for exitcode 127
     if int(pid_check['exitcode']) == 127:
-        kabort(kname, f'exit code 127: {pid} {safe_cmd}')
+        return fail(f'exit code 127: {pid} {safe_cmd}')
 
     out = (pid_check.get('out-data') or '').strip()
     err = (pid_check.get('err-data') or '').strip()
 
-    # stderr - report and return stdout if there is any
+    # stderr - report and return stdout if there is any ( probes stay quiet )
     if err:
+        if not fatal:
+            return out
         kmsg('proxmox_qa-stderr', f'{safe_cmd}\n{err}', 'err')
         if out:
             return out
@@ -151,14 +161,13 @@ def node_reboot_wait(vmid: int) -> None:
         # transient timer so the exec returns before the agent goes away
         qa_exec(vmid, 'systemd-run --on-active=1 systemctl reboot 2>/dev/null')
 
-        # wait for a new boot id
+        # wait for a new boot id - non fatal probe as the agent drops mid poll
+        # while the guest reboots ( a fatal qa_exec would abort the whole run )
         for count in range(60):
             time.sleep(2)
-            try:
-                if qa_exec(vmid, 'cat /proc/sys/kernel/random/boot_id') != boot_id:
-                    break
-            except Exception:
-                pass
+            new_boot_id = qa_exec(vmid, 'cat /proc/sys/kernel/random/boot_id', fatal = False)
+            if new_boot_id and new_boot_id != boot_id:
+                break
         else:
             kabort(kname, f'{vmname} did not reboot')
 

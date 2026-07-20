@@ -57,10 +57,7 @@ run() {
   echo "✅ $current_step ($(fmt $(($(date +%s) - t0))))"
 }
 
-# report which step failed and total elapsed time
-trap 'echo; echo "❌ FAILED: $current_step (after $(fmt $(($(date +%s) - start_time))))"' ERR
-
-# remove any generated files
+# remove any generated files - best effort so runs before the ERR trap is set
 rm \
 lib/manifests/config.yaml \
 lib/manifests/server.yaml \
@@ -69,6 +66,9 @@ lib/scripts/* \
 *.kubeconfig \
 *.k3stoken \
 > /dev/null 2>&1
+
+# report which step failed and total elapsed time
+trap 'echo; echo "❌ FAILED: $current_step (after $(fmt $(($(date +%s) - start_time))))"' ERR
 # -E so the ERR trap fires inside run()
 set -eE
 
