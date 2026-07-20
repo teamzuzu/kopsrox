@@ -58,11 +58,15 @@ run() {
 }
 
 # remove any generated files - best effort so runs before the ERR trap is set
+# lib/scripts/ listed explicitly ( not a wildcard ) - kopsrox-kernel.config lives
+# there too and must survive for the kernel rebuild phase below
 rm \
 lib/manifests/config.yaml \
 lib/manifests/server.yaml \
 lib/manifests/kopsrox* \
-lib/scripts/* \
+lib/scripts/k3s.sh \
+lib/scripts/kopsrox.sh \
+lib/scripts/microvm-template.sh \
 *.kubeconfig \
 *.k3stoken \
 > /dev/null 2>&1
