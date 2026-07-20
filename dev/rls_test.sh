@@ -38,7 +38,7 @@ fmt() {
 }
 
 # phase banner
-total_phases=6
+total_phases=7
 phase_num=0
 phase() {
   phase_num=$((phase_num + 1))
@@ -73,6 +73,9 @@ trap 'echo; echo "❌ FAILED: $current_step (after $(fmt $(($(date +%s) - start_
 set -eE
 
 echo "🚀 kopsrox release test - $(date '+%F %T')"
+
+phase "kernel rebuild 🐧"
+run "rebuild kopsrox kernel" bash dev/build-kopsrox-kernel.sh
 
 phase "clean slate 🧹"
 run "destroy existing cluster" $KCD
