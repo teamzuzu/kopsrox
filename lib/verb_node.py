@@ -2,10 +2,11 @@
 
 import os
 
-from kopsrox_config import cluster_id, localpass, localuser, vmip, vmnames, vms
-from kopsrox_k3s import cluster_info, k3s_init_node, k3s_remove_node
-from kopsrox_kmsg import kabort, kmsg
-from kopsrox_proxmox import clone, node_reboot_wait
+from kopsrox_artifacts import k3s_server_config
+from kopsrox_config import cluster_id, localpass, localuser, network_ip, vmip, vmnames, vms
+from kopsrox_k3s import cluster_info, k3s_forget_node, k3s_init_node, k3s_remove_node
+from kopsrox_kmsg import kabort, kmsg, kstep
+from kopsrox_proxmox import clone, node_reboot_wait, qa_exec, qa_write
 
 
 # cmd runs through all vms
@@ -43,14 +44,27 @@ def node_reboot(vmid: int) -> None:
     exit(0)
 
 
-# k3s uninstall
+# k3s uninstall - also drops any VIP address k3s-uninstall left orphaned on
+# this node ( it kills kube-vip's container before it can release the VIP )
+# and forgets the node's cluster registration, so a later rejoin under the
+# same name is accepted instead of hitting a stale node object / duplicate
+# etcd member
 def node_k3s_uninstall(vmid: int) -> None:
-    os.system(f'sudo qm guest exec {vmid} /usr/local/bin/k3s-uninstall.sh')
+    vmname = vmnames[vmid]
+    with kstep('node_k3s-uninstall', vmname):
+        qa_exec(vmid, '/usr/local/bin/k3s-uninstall.sh > /k3s_uninstall.log 2>&1')
+        qa_exec(vmid, f'ip addr del {network_ip}/32 dev eth0 2>/dev/null; true')
+        if not k3s_forget_node(vmid):
+            kmsg('node_k3s-uninstall', f'no other master up - {vmname} left registered in the cluster', 'sys')
     exit(0)
 
 
 # rejoin slave
 def node_rejoin_slave(vmid: int) -> None:
+    # k3s-uninstall wipes /etc/rancher/k3s ( directory and all ) - node_prepare
+    # only creates it once at clone time, so recreate it before reinstalling
+    qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
+    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_server_config())
     k3s_init_node(vmid, 'slave')
     exit(0)
 

@@ -233,7 +233,7 @@ Disabled via the kernel command line (`ipv6.disable=1`). k3s and Flannel are con
 
 **How do I re-add the m1 master?**
 
-Run `./kopsrox.py node k3s-uninstall <cluster>-m1`, then `node rejoin-slave <cluster>-m1`. If m1 held the VIP, kube-vip moves it automatically.
+Run `./kopsrox.py node k3s-uninstall <cluster>-m1`, then `node rejoin-slave <cluster>-m1`. If m1 held the VIP, kube-vip moves it automatically. This requires at least one other healthy master (masters = 3) — with a single master there is no other node to rejoin against, and `cluster restore` is the right tool instead.
 
 ## Acknowledgements
 

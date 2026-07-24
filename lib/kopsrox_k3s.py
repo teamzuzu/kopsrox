@@ -119,6 +119,28 @@ def k3s_remove_node(vmid: int) -> None:
 
     kplan_tick()
 
+# any other currently existing master vmid, or None if vmid is the only one up -
+# kubectl always needs a live target and it cannot be the master being operated on
+def other_master(vmid: int) -> int | None:
+    vmids = list_kopsrox_vm()
+    for candidate in (masterid, masterid + 1, masterid + 2):
+        if candidate != vmid and candidate in vmids:
+            return candidate
+    return None
+
+# forget a node's cluster registration ( node object + password secret ) via
+# another master - etcd otherwise rejects a rejoining node reusing a name it
+# still holds membership under ( the same trap k3s_remove_node works around
+# for rebuilt nodes ). returns False if no other master is up to do it through
+def k3s_forget_node(vmid: int) -> bool:
+    via = other_master(vmid)
+    if via is None:
+        return False
+    vmname = vmnames[vmid]
+    kubectl(f'delete node {vmname} --ignore-not-found', via)
+    kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found', via)
+    return True
+
 # remove cluster - leave master if restore = true
 def k3s_rm_cluster() -> None:
 
@@ -256,10 +278,11 @@ def kubeconfig() -> None:
         new_kubeconfig.write(kconfig)
     kmsg('k3s_kubeconfig', f'saved {kubeconfig}')
 
-# kubectl
-def kubectl(cmd: str) -> str:
+# kubectl - vmid lets a caller route through a specific master ( eg when
+# masterid itself is the node being operated on and has no working kubectl )
+def kubectl(cmd: str, vmid: int = masterid) -> str:
     k3s_cmd = f'/usr/local/bin/kubectl {cmd} 2>&1'
-    kcmd = qa_exec(masterid,k3s_cmd)
+    kcmd = qa_exec(vmid,k3s_cmd)
     return kcmd
 
 # run k3s check config
