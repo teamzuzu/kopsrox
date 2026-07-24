@@ -196,7 +196,7 @@ def init(verb: str, cmd: str) -> None:
         g['microvm_ver'] = subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"], text=True, capture_output=True).stdout.strip()
         microvm_ver = g['microvm_ver']
         if microvm_ver == 'none':
-            kabort(g['kname'], 'pve-microvm is not installed - see docs/SETUP.md')
+            kabort(g['kname'], 'pve-microvm is not installed - see README.md')
         microvm_installed = tuple(map(int, microvm_ver.split('-')[0].split('.')))
         if microvm_installed < (0, 3, 19):
             kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.19 or later')

@@ -8,3 +8,4 @@ lib/__pycache__/
 *.kubeconfig
 kopsrox-image.log
 .baseline/
+docs/superpowers/
