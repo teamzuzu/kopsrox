@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
-# cluster artifact generators - shared by verb_image ( writes local copies )
-# and node_prepare ( pushes config-fresh copies into nodes via the guest agent )
+# cluster artifact generators - shared by verb_image ( writes local inspection
+# copies ) and kopsrox_k3s.k3s_join ( pushes config-fresh copies into nodes at
+# join time via the guest agent )
 from kopsrox_config import (
     access_key,
     access_secret,
     bucket,
     cluster_name,
-    k3s_version,
     masterid,
     network_ip,
     region_string,
@@ -42,16 +42,51 @@ spec:
     # storage is provided by the k3s local-path provisioner instead
     return manifest
 
-# k3s server config file ( /etc/rancher/k3s/config.yaml )
-def k3s_server_config() -> str:
-    server_config = f'''\
+# k3s config file ( /etc/rancher/k3s/config.yaml ) - role-aware since the
+# systemd units baked into the image at build time carry no node-specific
+# flags ( see verb_image.py ); every join-time flag k3s would otherwise take
+# on the command line is supplied here instead, per k3s's own equivalence
+# between config.yaml keys and CLI flags
+def k3s_config(nodetype: str, vmid: int, token: str = '') -> str:
+    kubelet_arg = f'"provider-id=proxmox://{cluster_name}/{vmid}"'
+
+    # worker ( agent role ) - no etcd, no cloud-controller-manager, no tls-san
+    if nodetype == 'worker':
+        return f'''\
+server: https://{network_ip}:6443
+token: {token}
+kubelet-arg:
+  - {kubelet_arg}'''
+
+    # master bootstraps its own cluster - slave joins an existing one. if a
+    # token is passed for master ( eg a saved token from a prior cluster of
+    # the same name ) pin cluster-init to it, so recreating a cluster is
+    # deterministic rather than minting a new token every time. callers that
+    # need a genuinely fresh identity ( k3s_join()'s restore bootstrap, ahead
+    # of --cluster-reset-restore-path ) pass an empty token instead - pinning
+    # a stale token there conflicts with the fresh CA cluster-reset generates
+    if nodetype == 'master':
+        join_config = 'cluster-init: true'
+        if token:
+            join_config += f'\ntoken: {token}'
+    else:
+        join_config = f'server: https://{network_ip}:6443\ntoken: {token}'
+
+    region_config = ''
+    if region_string != '':
+        region_config = f'\netcd-s3-region: {region_string}'
+
+    return f'''\
+{join_config}
+kubelet-arg:
+  - {kubelet_arg}
 disable-cloud-controller: true
 tls-san:
   - {network_ip}
   - {vmip(masterid)}
   - {vmip(masterid + 1)}
   - {vmip(masterid + 2)}
-write-kubeconfig-mode: 0644
+write-kubeconfig-mode: "0644"
 embedded-registry: true
 disable:
   - servicelb
@@ -63,60 +98,4 @@ etcd-s3-access-key: {access_key}
 etcd-s3-secret-key: {access_secret}
 etcd-s3-bucket: {bucket}
 etcd-s3-skip-ssl-verify: true
-etcd-snapshot-compress: true'''
-
-    # handle s3 region
-    if region_string != '':
-        server_config += f'''
-etcd-s3-region: {region_string}'''
-    return server_config
-
-# in-node k3s install script ( /root/scripts/kopsrox.sh )
-def kopsrox_sh() -> str:
-    k3s_ver = f'cat /root/scripts/k3s.sh | INSTALL_K3S_VERSION={k3s_version}'
-    k3s_opt = f'--kubelet-arg --provider-id=proxmox://{cluster_name}/$2'
-    k3s_server = f'--server https://{network_ip}:6443'
-    k3s_master = f'{k3s_ver} sh -s - server --cluster-init {k3s_opt}'
-    k3s_slave = f'{k3s_ver} sh -s - server {k3s_server} {k3s_opt}'
-    k3s_worker = f'rm -rf /etc/rancher/k3s/* && {k3s_ver} sh -s - agent {k3s_server} {k3s_opt}'
-    return f'''\
-#!/usr/bin/env bash
-if [[ ! "$1" ]] then
-echo 'command not passed'
-exit
-fi
-
-if [[ ! "$2" ]] then
-echo 'vmid not passed'
-fi
-
-if [[ "$3" ]] then
-token_command="--token $3"
-fi
-
-if [[ "$1" == "master" ]] then
-{k3s_master} $token_command
-exit
-fi
-
-if [[ "$1" == "slave" ]] then
-{k3s_slave} $token_command
-exit
-fi
-
-if [[ "$1" == "worker" ]] then
-{k3s_worker} $token_command
-exit
-fi
-
-if [[ "$1" == "latest" ]] then
-{k3s_master} $token_command > /k3s_latest_install.log 2>&1 && /usr/local/bin/k3s etcd-snapshot ls 2>&1 && systemctl stop k3s && rm -rf /var/lib/rancher
-exit
-fi
-
-if [[ "$1" == "restore" ]] then
-{k3s_master} $token_command && systemctl stop k3s && rm -rf /var/lib/rancher && /usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path=$2 $token_command 2>&1 && systemctl start k3s
-exit
-fi
-
-'''
+etcd-snapshot-compress: true{region_config}'''

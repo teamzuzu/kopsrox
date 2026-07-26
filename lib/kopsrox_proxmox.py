@@ -4,10 +4,8 @@
 import re
 import time
 
-from kopsrox_artifacts import k3s_server_config, kopsrox_manifest, kopsrox_sh
 from kopsrox_config import (
     cluster_id,
-    cluster_name,
     extra_packages,
     localpass,
     localsshkey,
@@ -208,7 +206,7 @@ DNS={network_dns}
         qa_exec(vmid, 'rm -f /etc/systemd/network/20-microvm-dhcp.network /etc/microvm-static-net')
 
         # fallback script + oneshot unit - networkd sometimes never claims the nic on microvm
-        qa_exec(vmid, 'mkdir -p /root/scripts /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests /etc/sudoers.d')
+        qa_exec(vmid, 'mkdir -p /root/scripts /etc/sudoers.d')
         qa_write(vmid, '/root/scripts/kopsrox-net.sh', f'''\
 #!/bin/sh
 for dev in /sys/class/net/*; do
@@ -243,15 +241,6 @@ WantedBy=multi-user.target
 
         # fresh machine-id per clone - regenerated on boot
         qa_exec(vmid, 'rm -f /etc/machine-id /var/lib/dbus/machine-id; touch /etc/machine-id')
-
-        # push k3s install scripts
-        qa_write(vmid, '/root/scripts/k3s.sh', open('./lib/scripts/k3s.sh').read(), '755')
-        qa_write(vmid, '/root/scripts/kopsrox.sh', kopsrox_sh(), '755')
-
-        # server config and manifests - masters only
-        if masterid <= vmid <= (masterid + 2):
-            qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_server_config())
-            qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
 
         # grow the root filesystem to the resized disk - partitionless ext4
         qa_exec(vmid, 'resize2fs /dev/vda 2>/dev/null')

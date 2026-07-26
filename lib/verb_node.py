@@ -2,11 +2,10 @@
 
 import os
 
-from kopsrox_artifacts import k3s_server_config
 from kopsrox_config import cluster_id, localpass, localuser, network_ip, vmip, vmnames, vms
 from kopsrox_k3s import cluster_info, k3s_forget_node, k3s_init_node, k3s_remove_node
 from kopsrox_kmsg import kabort, kmsg, kstep
-from kopsrox_proxmox import clone, node_reboot_wait, qa_exec, qa_write
+from kopsrox_proxmox import clone, node_reboot_wait, qa_exec
 
 
 # cmd runs through all vms
@@ -44,27 +43,32 @@ def node_reboot(vmid: int) -> None:
     exit(0)
 
 
-# k3s uninstall - also drops any VIP address k3s-uninstall left orphaned on
-# this node ( it kills kube-vip's container before it can release the VIP )
-# and forgets the node's cluster registration, so a later rejoin under the
-# same name is accepted instead of hitting a stale node object / duplicate
-# etcd member
+# k3s uninstall - both k3s.service and k3s-agent.service are baked into every
+# node's image ( see verb_image.py ), so k3s's own k3s-uninstall.sh must not be
+# used here: it always sees the other role's unit file present, skips
+# removing the shared binary/data, and unconditionally deletes its own unit
+# file first - leaving nothing for a later rejoin to enable. k3s-killall.sh is
+# the generic, role-agnostic part of the installer ( stops both units, kills
+# leftover processes/mounts ) so use that instead and wipe state by hand.
+# also drops any VIP address left orphaned on this node ( kube-vip's
+# container is killed before it can release the VIP ) and forgets the node's
+# cluster registration, so a later rejoin under the same name is accepted
+# instead of hitting a stale node object / duplicate etcd member
 def node_k3s_uninstall(vmid: int) -> None:
     vmname = vmnames[vmid]
     with kstep('node_k3s-uninstall', vmname):
-        qa_exec(vmid, '/usr/local/bin/k3s-uninstall.sh > /k3s_uninstall.log 2>&1')
+        qa_exec(vmid, '/usr/local/bin/k3s-killall.sh > /k3s_uninstall.log 2>&1')
+        qa_exec(vmid, 'rm -rf /var/lib/rancher /etc/rancher/k3s')
         qa_exec(vmid, f'ip addr del {network_ip}/32 dev eth0 2>/dev/null; true')
         if not k3s_forget_node(vmid):
             kmsg('node_k3s-uninstall', f'no other master up - {vmname} left registered in the cluster', 'sys')
     exit(0)
 
 
-# rejoin slave
+# rejoin slave - k3s_init_node/k3s_join recreates config.yaml itself, and the
+# systemd unit is baked into the image, so this works even after
+# node_k3s_uninstall wiped /etc/rancher/k3s and /var/lib/rancher entirely
 def node_rejoin_slave(vmid: int) -> None:
-    # k3s-uninstall wipes /etc/rancher/k3s ( directory and all ) - node_prepare
-    # only creates it once at clone time, so recreate it before reinstalling
-    qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
-    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_server_config())
     k3s_init_node(vmid, 'slave')
     exit(0)
 

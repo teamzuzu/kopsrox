@@ -5,6 +5,7 @@ import os
 import re
 import time
 
+from kopsrox_artifacts import k3s_config, kopsrox_manifest
 from kopsrox_config import (
     cluster_id,
     cluster_name,
@@ -20,7 +21,7 @@ from kopsrox_config import (
     vmnames,
     workers,
 )
-from kopsrox_proxmox import clone, internet_check, prox_destroy, qa_exec
+from kopsrox_proxmox import clone, internet_check, prox_destroy, qa_exec, qa_write
 from kopsrox_kmsg import kabort, kmsg, kplan_tick, kstep
 
 
@@ -33,6 +34,38 @@ def k3s_check(vmid: int) -> bool:
     # return true if Ready
     # word boundary as NotReady also contains Ready
     return bool(re.search(r'\bReady\b', get_node))
+
+# systemd unit baked into the image for this role at image-build time
+# ( see verb_image.py ) - server role covers master/slave/restore, agent role
+# is the separate k3s-agent unit k3s's installer creates for workers
+def k3s_service(nodetype: str) -> str:
+    return 'k3s-agent' if nodetype == 'worker' else 'k3s'
+
+# write this node's config.yaml ( + manifests for server roles ) and start the
+# systemd unit already baked into the image - no install, no internet
+# dependency at join time, every role-specific flag lives in config.yaml.
+# token defaults to the saved token file ( reused so recreating a cluster of
+# the same name is deterministic ) - pass token='' to force a fresh identity
+# ( restore's pre-reset bootstrap needs this, see k3s_init_node )
+def k3s_join(vmid: int, nodetype: str, token: str | None = None) -> None:
+    if token is None:
+        token = get_k3s_token() or ''
+    service = k3s_service(nodetype)
+    qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
+    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_config(nodetype, vmid, token))
+    if service == 'k3s':
+        qa_exec(vmid, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
+        qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
+    qa_exec(vmid, f'systemctl enable --now {service} > /k3s_{nodetype}_install.log 2>&1')
+
+# wait for a node to report Ready - each k3s_check is a kubectl run so takes a second or two
+def k3s_wait_ready(vmid: int, vmname: str) -> None:
+    wait: int = 20
+    for count in range(wait):
+        if k3s_check(vmid):
+            return
+        time.sleep(1)
+    kabort('k3s_check', f'timed out after {wait}s for {vmname}')
 
 # create a master/slave/worker
 def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str = 'kopsrox') -> None:
@@ -55,49 +88,50 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
 
     # master / slave / worker
     if nodetype in ['master', 'worker', 'slave']:
-        step_msg = f'installing {k3s_version} on {vmname}'
-        init_cmd = f'/root/scripts/kopsrox.sh {nodetype} {vmid} {get_k3s_token()}'
+        with kstep(f'k3s_{nodetype}', f'starting k3s {k3s_version} on {vmname}') as step:
+            k3s_join(vmid, nodetype)
+            step.msg = f'waiting for {vmname} Ready'
+            k3s_wait_ready(vmid, vmname)
+        kplan_tick()
 
-    # restore
+    # restore - bootstrap a fresh single-node master, then reset+restore it
+    # from a snapshot ( 'kopsrox' means find the latest one first ). token=''
+    # forces a genuinely fresh identity for this bootstrap - pinning a saved
+    # token here conflicts with the new CA cluster-reset generates below
     if nodetype == 'restore':
-        if snapshot == 'kopsrox':
-            bs_cmd = f'/root/scripts/kopsrox.sh latest {masterid} {get_k3s_token()}'
-            bs_cmd_out = qa_exec(masterid,bs_cmd)
+        with kstep('k3s_restore', f'bootstrapping {vmname}') as step:
+            k3s_join(vmid, 'master', token='')
+            step.msg = f'waiting for {vmname} Ready'
+            k3s_wait_ready(vmid, vmname)
 
-            # sort ls output so last is latest snapshot
-            for snap in sorted(bs_cmd_out.split('\n')):
-                if re.search(f'kopsrox-{cluster_name}', snap.split()[0]):
-                    latest = snap.split()[0]
-            snapshot = latest
+            if snapshot == 'kopsrox':
+                step.msg = 'looking up latest snapshot'
+                ls_out = qa_exec(vmid, '/usr/local/bin/k3s etcd-snapshot ls 2>&1')
 
-        step_msg = f'restoring {snapshot}'
-        init_cmd = f'/root/scripts/kopsrox.sh restore {snapshot} {get_k3s_token()}'
+                # sort ls output so last is latest snapshot
+                for snap in sorted(ls_out.split('\n')):
+                    if re.search(f'kopsrox-{cluster_name}', snap.split()[0]):
+                        snapshot = snap.split()[0]
 
-    # write log of install on node
-    init_cmd = init_cmd + f' > /k3s_{nodetype}_install.log 2>&1'
-
-    with kstep(f'k3s_{nodetype}', step_msg) as step:
-
-        # run command
-        qa_exec(vmid,init_cmd)
-
-        # wait until ready - each k3s_check is a kubectl run so takes a second or two
-        step.msg = f'waiting for {vmname} Ready'
-        wait: int = 20
-        for count in range(wait):
-            if k3s_check(vmid):
-                break
-            time.sleep(1)
-        else:
-            kabort('k3s_check', f'timed out after {wait}s for {vmname}')
-
-    kplan_tick()
+            step.msg = f'restoring {snapshot}'
+            qa_exec(vmid, 'systemctl stop k3s')
+            qa_exec(vmid, 'rm -rf /var/lib/rancher')
+            qa_exec(vmid, f'/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path={snapshot} > /k3s_restore.log 2>&1')
+            # rm -rf above also wiped the manifests dir ( it lives under
+            # /var/lib/rancher ) - without kube-vip's manifest reapplied here
+            # the vip never comes back after a restore
+            qa_exec(vmid, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
+            qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
+            qa_exec(vmid, 'systemctl start k3s')
+            step.msg = f'waiting for {vmname} Ready'
+            k3s_wait_ready(vmid, vmname)
+        kplan_tick()
 
     # final steps for first master / restore export kubeconfig and token
     if nodetype in ['master', 'restore']:
         with kstep('k3s_export', 'kubeconfig + token'):
             kubeconfig()
-            export_k3s_token()
+            export_k3s_token(restore=(nodetype == 'restore'))
         kplan_tick()
 
 # remove a node
@@ -292,8 +326,11 @@ def k3s_check_config() -> None:
     kcmd = qa_exec(masterid,k3s_cmd)
     print(kcmd)
 
-# export k3s token
-def export_k3s_token() -> None:
+# export k3s token - restore=True skips the password check: k3s's own
+# --cluster-reset always mints an entirely new token ( not just a new CA ),
+# so a changed password after a restore is expected, not a sign of a
+# different cluster reusing the name
+def export_k3s_token(restore: bool = False) -> None:
 
     # define token file name
     token_name = f'{cluster_name}.k3stoken'
@@ -308,11 +345,11 @@ def export_k3s_token() -> None:
         if not saved_token == live_token:
 
             # passwords are different..
-            if not saved_token.split(':')[3]  == live_token.split(':')[3]:
+            if not restore and not saved_token.split(':')[3] == live_token.split(':')[3]:
                 kabort('k3s_export-token', 'passwords different between live system and local token! exiting')
 
-            # CA is different - expected on a new cluster
-            kmsg('k3s_export-token', f'found: {token_name} updating CA')
+            # CA ( and after a restore, the whole token ) is different - expected
+            kmsg('k3s_export-token', f'found: {token_name} updating')
             with open(token_name, 'w') as token_file:
                 token_file.write(live_token)
 

@@ -65,7 +65,6 @@ lib/manifests/config.yaml \
 lib/manifests/server.yaml \
 lib/manifests/kopsrox* \
 lib/scripts/k3s.sh \
-lib/scripts/kopsrox.sh \
 lib/scripts/microvm-template.sh \
 *.kubeconfig \
 *.k3stoken \

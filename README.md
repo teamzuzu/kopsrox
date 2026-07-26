@@ -108,7 +108,7 @@ produces this layout:
 
 With `kopsrox.ini` configured, a cluster is three commands away.
 
-**Build the image.** Builds a microvm template from the configured OCI image (takes a couple of minutes — watch `kopsrox-image.log` if curious):
+**Build the image.** Builds a microvm template from the configured OCI image with k3s already baked in (takes a few minutes — watch `kopsrox-image.log` if curious):
 
 ```
 ./kopsrox.py image create
@@ -155,7 +155,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 ### image
 
-- **create / update** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Verifies the rootfs, sets the kopsrox kernel, and converts the VM to a template on VM ID `cluster_id`. Nothing cluster-specific is baked in — node identity and k3s configuration are pushed to each node at create time via the guest agent.
+- **create / update** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in the `k3s_version` set in `kopsrox.ini` (both the master/slave and worker systemd services, ready but not started), then converts the VM to a template on VM ID `cluster_id`. Nothing node-specific is baked in — node identity and k3s's role-specific config are pushed to each node at create time via the guest agent. Changing `k3s_version` takes effect on the next `image update`, not on the next node join.
 - **info** — prints the template description (source image, k3s version, creation time) and its storage volume.
 - **destroy** — deletes the image template.
 
@@ -225,7 +225,7 @@ This is mostly supported but largely untested — kopsrox builds everything on t
 
 **The guest agent times out, or nodes can't reach the internet.**
 
-Check the `network_*` settings in `kopsrox.ini` — nodes need internet access to download k3s. `./kopsrox.py node utility` followed by `node terminal` is a good way to investigate, with root autologin on the serial console.
+Check the `network_*` settings in `kopsrox.ini` — k3s ships baked into the image, but nodes still need internet access to reach the S3 endpoint for etcd snapshots. `./kopsrox.py node utility` followed by `node terminal` is a good way to investigate, with root autologin on the serial console.
 
 **IPv6?**
 
