@@ -180,14 +180,22 @@ def node_prepare(vmid: int) -> None:
 
     with kstep(kname, f'configuring {vmname}'):
 
-        # neutralise pve-microvm first boot services
-        # microvm-setup waits for network then installs cloud-init/docker
-        # microvm-static-net regenerates network config every boot
-        qa_exec(vmid, 'systemctl disable --now microvm-setup.service 2>/dev/null; touch /etc/microvm-setup-done; systemctl disable microvm-static-net.service 2>/dev/null; true')
+        # every pre-reboot step below is bundled into one script and run via
+        # a single qa_exec call - each guest-agent round trip has a fixed
+        # ~0.5-1s protocol cost regardless of what it does, and this used to
+        # be ~15 separate calls ( qa_write() alone is a write + a chmod )
+        prepare_sh = f'''\
+#!/bin/sh
+# neutralise pve-microvm first boot services
+# microvm-setup waits for network then installs cloud-init/docker
+# microvm-static-net regenerates network config every boot
+systemctl disable --now microvm-setup.service 2>/dev/null
+touch /etc/microvm-setup-done
+systemctl disable microvm-static-net.service 2>/dev/null
 
-        # static network via systemd-networkd
-        # match on driver - Type=ether also matches dummy0/sit0 from the kopsrox kernel
-        qa_write(vmid, '/etc/systemd/network/10-kopsrox.network', f'''\
+# static network via systemd-networkd
+# match on driver - Type=ether also matches dummy0/sit0 from the kopsrox kernel
+cat > /etc/systemd/network/10-kopsrox.network <<'KOPSROX_EOF'
 [Match]
 Driver=virtio_net
 
@@ -198,12 +206,13 @@ MTUBytes={network_mtu}
 Address={vmip(vmid)}/{network_mask}
 Gateway={network_gw}
 DNS={network_dns}
-''')
-        qa_exec(vmid, 'rm -f /etc/systemd/network/20-microvm-dhcp.network /etc/microvm-static-net')
+KOPSROX_EOF
+chmod 644 /etc/systemd/network/10-kopsrox.network
+rm -f /etc/systemd/network/20-microvm-dhcp.network /etc/microvm-static-net
 
-        # fallback script + oneshot unit - networkd sometimes never claims the nic on microvm
-        qa_exec(vmid, 'mkdir -p /root/scripts')
-        qa_write(vmid, '/root/scripts/kopsrox-net.sh', f'''\
+# fallback script + oneshot unit - networkd sometimes never claims the nic on microvm
+mkdir -p /root/scripts
+cat > /root/scripts/kopsrox-net.sh <<'KOPSROX_EOF'
 #!/bin/sh
 for dev in /sys/class/net/*; do
   # skip virtual devices like lo/dummy0/sit0 - only real ( virtio ) nics have a device link
@@ -213,8 +222,9 @@ for dev in /sys/class/net/*; do
   ip addr replace {vmip(vmid)}/{network_mask} dev $dev
   ip route replace default via {network_gw} dev $dev
 done
-''', '755')
-        qa_write(vmid, '/etc/systemd/system/kopsrox-net.service', '''\
+KOPSROX_EOF
+chmod 755 /root/scripts/kopsrox-net.sh
+cat > /etc/systemd/system/kopsrox-net.service <<'KOPSROX_EOF'
 [Unit]
 Description=kopsrox static network fallback
 After=network.target
@@ -225,21 +235,30 @@ ExecStart=/root/scripts/kopsrox-net.sh
 
 [Install]
 WantedBy=multi-user.target
-''')
-        qa_exec(vmid, 'systemctl enable kopsrox-net.service 2>/dev/null')
+KOPSROX_EOF
+chmod 644 /etc/systemd/system/kopsrox-net.service
+systemctl enable kopsrox-net.service 2>/dev/null
 
-        # hostname - must match vmnames for k3s node operations
-        qa_write(vmid, '/etc/hostname', f'{vmname}\n')
-        qa_exec(vmid, f'sed -i /{vmname}/d /etc/hosts; echo 127.0.1.1 {vmname} >> /etc/hosts')
+# hostname - must match vmnames for k3s node operations
+echo '{vmname}' > /etc/hostname
+chmod 644 /etc/hostname
+sed -i /{vmname}/d /etc/hosts
+echo 127.0.1.1 {vmname} >> /etc/hosts
 
-        # fresh machine-id per clone - regenerated on boot
-        qa_exec(vmid, 'rm -f /etc/machine-id /var/lib/dbus/machine-id; touch /etc/machine-id')
+# fresh machine-id per clone - regenerated on boot
+rm -f /etc/machine-id /var/lib/dbus/machine-id
+touch /etc/machine-id
 
-        # grow the root filesystem to the resized disk - partitionless ext4
-        qa_exec(vmid, 'resize2fs /dev/vda 2>/dev/null')
+# grow the root filesystem to the resized disk - partitionless ext4
+resize2fs /dev/vda 2>/dev/null
 
-        # mark prepared and reboot into final state
-        qa_exec(vmid, 'touch /etc/kopsrox-node-init-done')
+# mark prepared - a reboot into final state follows this script
+touch /etc/kopsrox-node-init-done
+exit 0
+'''
+        qa_write(vmid, '/root/kopsrox-prepare.sh', prepare_sh, '755')
+        qa_exec(vmid, '/root/kopsrox-prepare.sh > /kopsrox-prepare.log 2>&1; rm -f /root/kopsrox-prepare.sh')
+
         node_reboot_wait(vmid)
 
         # verify static ip applied
