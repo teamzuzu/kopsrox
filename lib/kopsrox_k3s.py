@@ -41,9 +41,12 @@ def k3s_check(vmid: int) -> bool:
 def k3s_service(nodetype: str) -> str:
     return 'k3s-agent' if nodetype == 'worker' else 'k3s'
 
-# write this node's config.yaml ( + manifests for server roles ) and start the
-# systemd unit already baked into the image - no install, no internet
-# dependency at join time, every role-specific flag lives in config.yaml.
+# write this node's config.yaml and start the systemd unit already baked
+# into the image - no install, no internet dependency at join time, every
+# role-specific flag lives in config.yaml. the kube-vip/traefik manifest is
+# also baked into the image ( verb_image.py ) so a fresh clone needs no
+# write for it here - only the restore path rewrites it, since restoring
+# wipes the manifests dir along with the rest of /var/lib/rancher.
 # token defaults to the saved token file ( reused so recreating a cluster of
 # the same name is deterministic ) - pass token='' to force a fresh identity
 # ( restore's pre-reset bootstrap needs this, see k3s_init_node )
@@ -53,9 +56,6 @@ def k3s_join(vmid: int, nodetype: str, token: str | None = None) -> None:
     service = k3s_service(nodetype)
     qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
     qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_config(nodetype, vmid, token))
-    if service == 'k3s':
-        qa_exec(vmid, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
-        qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
     qa_exec(vmid, f'systemctl enable --now {service} > /k3s_{nodetype}_install.log 2>&1')
 
 # wait for a node to report Ready - each k3s_check is a kubectl run so takes a second or two

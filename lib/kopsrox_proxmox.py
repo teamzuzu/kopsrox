@@ -6,10 +6,6 @@ import time
 
 from kopsrox_config import (
     cluster_id,
-    extra_packages,
-    localpass,
-    localsshkey,
-    localuser,
     masterid,
     network_bridge,
     network_dns,
@@ -206,7 +202,7 @@ DNS={network_dns}
         qa_exec(vmid, 'rm -f /etc/systemd/network/20-microvm-dhcp.network /etc/microvm-static-net')
 
         # fallback script + oneshot unit - networkd sometimes never claims the nic on microvm
-        qa_exec(vmid, 'mkdir -p /root/scripts /etc/sudoers.d')
+        qa_exec(vmid, 'mkdir -p /root/scripts')
         qa_write(vmid, '/root/scripts/kopsrox-net.sh', f'''\
 #!/bin/sh
 for dev in /sys/class/net/*; do
@@ -232,9 +228,6 @@ WantedBy=multi-user.target
 ''')
         qa_exec(vmid, 'systemctl enable kopsrox-net.service 2>/dev/null')
 
-        # dns - no systemd-resolved in the image
-        qa_write(vmid, '/etc/resolv.conf', f'nameserver {network_dns}\n')
-
         # hostname - must match vmnames for k3s node operations
         qa_write(vmid, '/etc/hostname', f'{vmname}\n')
         qa_exec(vmid, f'sed -i /{vmname}/d /etc/hosts; echo 127.0.1.1 {vmname} >> /etc/hosts')
@@ -244,13 +237,6 @@ WantedBy=multi-user.target
 
         # grow the root filesystem to the resized disk - partitionless ext4
         qa_exec(vmid, 'resize2fs /dev/vda 2>/dev/null')
-
-        # create user
-        qa_exec(vmid, f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; echo {localuser}:{localpass} | chpasswd')
-        qa_exec(vmid, f'mkdir -p /home/{localuser}/.ssh')
-        qa_write(vmid, f'/home/{localuser}/.ssh/authorized_keys', f'{localsshkey}\n', '600')
-        qa_exec(vmid, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
-        qa_write(vmid, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
 
         # mark prepared and reboot into final state
         qa_exec(vmid, 'touch /etc/kopsrox-node-init-done')
@@ -263,12 +249,6 @@ WantedBy=multi-user.target
 
         # verify internet access
         internet_check(vmid)
-
-        # install any extra packages
-        if extra_packages:
-            packages = extra_packages.replace(',', ' ')
-            kmsg(kname, f'{vmname} installing {packages}')
-            qa_exec(vmid, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
 
 # stop and destroy vm
 def prox_destroy(vmid: int) -> None:

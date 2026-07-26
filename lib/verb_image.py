@@ -11,13 +11,18 @@ from kopsrox_config import (
     cloud_image_desc,
     cluster_id,
     cluster_name,
+    extra_packages,
     image_info,
     k3s_version,
     kopsrox_img,
     local_exec,
+    localpass,
+    localsshkey,
+    localuser,
     masterid,
     microvm_initrd,
     microvm_kernel,
+    network_dns,
     oci_image,
     prox,
     proxmox_node,
@@ -153,13 +158,13 @@ fi''').stdout.strip()
 -initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
     kplan_tick()
 
-    # boot the template once to bake k3s into it via the guest agent - both
-    # roles are installed ( master/slave share k3s.service, workers use the
-    # separate k3s-agent.service the installer creates for an "agent" exec
-    # command ) with no node-specific flags baked in, since those are supplied
-    # per node via config.yaml at join time ( kopsrox_k3s.k3s_join ) instead
-    # of a live install on every clone
-    with kstep(f'{kname}k3s', f'baking k3s {k3s_version} into the template'):
+    # boot the template once to bake k3s and every cluster-wide ( not
+    # per-node ) piece of node_prepare() into it via the guest agent - the
+    # local user, DNS, extra_packages and the kube-vip/traefik manifest are
+    # identical for every node in this cluster, so there is no reason to
+    # redo them on each clone. only genuinely per-node state ( static ip,
+    # hostname, machine-id, root fs resize ) still happens in node_prepare()
+    with kstep(f'{kname}k3s', f'baking k3s {k3s_version} into the template') as step:
         prox_task(prox.nodes(proxmox_node).qemu(cluster_id).status.start.post())
         qa_write(cluster_id, '/root/k3s-install.sh', open(get_k3s_path).read(), '755')
         install_env = f'INSTALL_K3S_VERSION={k3s_version} INSTALL_K3S_SKIP_START=true INSTALL_K3S_SKIP_ENABLE=true'
@@ -173,6 +178,19 @@ fi''').stdout.strip()
         if baked_check != 'ok':
             kabort(f'{kname}k3s', 'k3s binary or systemd units missing after install - check /k3s_install_*.log on the template')
         qa_exec(cluster_id, 'rm -f /k3s_install_server.log /k3s_install_agent.log')
+
+        step.msg = 'baking cluster-wide config into the template'
+        qa_exec(cluster_id, f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; echo {localuser}:{localpass} | chpasswd')
+        qa_exec(cluster_id, f'mkdir -p /home/{localuser}/.ssh /etc/sudoers.d')
+        qa_write(cluster_id, f'/home/{localuser}/.ssh/authorized_keys', f'{localsshkey}\n', '600')
+        qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
+        qa_write(cluster_id, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
+        qa_write(cluster_id, '/etc/resolv.conf', f'nameserver {network_dns}\n')
+        if extra_packages:
+            packages = extra_packages.replace(',', ' ')
+            qa_exec(cluster_id, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
+        qa_exec(cluster_id, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
+        qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
 
         # graceful agent-driven shutdown ( pve-microvm >= 0.3.19, already relied
         # on elsewhere - see CLAUDE.md ) so the just-written files are flushed,
