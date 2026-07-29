@@ -170,6 +170,22 @@ def init(verb: str, cmd: str) -> None:
         if cluster_id not in vms:
             kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
+    # image description - template may not exist yet on image create
+    try:
+        template_data = prox.nodes(g['proxmox_node']).qemu(cluster_id).config.get()
+        g['cloud_image_desc'] = template_data['description']
+    except Exception:
+        g['cloud_image_desc'] = ''
+
+    # notify if the configured k3s_version differs from what's baked into the
+    # image - image content only changes via image create/update, so editing
+    # the ini alone does not affect a running cluster or new clones until then
+    image_k3s_match = re.search(r'k3s_version: (\S+)', g['cloud_image_desc'])
+    if image_k3s_match and image_k3s_match.group(1) != g['k3s_version']:
+        kmsg(g['kname'], f'kopsrox.ini k3s_version ({g["k3s_version"]}) differs from the image '
+             f'({image_k3s_match.group(1)}) - run "image update" to rebuild, then "k3s upgrade" '
+             f'to apply it to the running cluster', 'sys')
+
     # guest verbs power on any stopped node
     if verb in ['cluster', 'k3s', 'etcd', 'node']:
         for vmid in vms:
@@ -210,13 +226,6 @@ def init(verb: str, cmd: str) -> None:
                 kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ){pvedaemon_hint}', 'sys')
         except Exception:
             pass
-
-        # template may not exist yet on image create
-        try:
-            template_data = prox.nodes(g['proxmox_node']).qemu(cluster_id).config.get()
-            g['cloud_image_desc'] = template_data['description']
-        except Exception:
-            g['cloud_image_desc'] = ''
 
         # check configured bridge exists or is a sdn vnet - skipped when the cluster is already live
         network_bridge = g['network_bridge']

@@ -5,6 +5,8 @@ import os
 import re
 import time
 
+import requests
+
 from kopsrox_artifacts import k3s_config, kopsrox_manifest
 from kopsrox_config import (
     cluster_id,
@@ -300,6 +302,53 @@ def k3s_update_cluster() -> None:
 
     # display cluster info
     cluster_info()
+
+# upgrade every live node to the k3s_version configured in the ini - masters
+# one at a time first ( never more than one down, preserving etcd quorum ),
+# then workers. re-runs the k3s installer live against each running node -
+# same mechanism image_create() uses to bake a fresh image, just targeting
+# an already-running node instead of the stopped template. the installer is
+# idempotent ( skips the restart if the binary is already at this version )
+def k3s_upgrade_cluster() -> None:
+    kmsg('k3s_upgrade-cluster', f'{cluster_name} - upgrading to {k3s_version}', 'sys')
+
+    # download the k3s install script if missing - same cached copy image_create() uses
+    get_k3s_path = './lib/scripts/k3s.sh'
+    if not os.path.isfile(get_k3s_path):
+        kmsg('k3s_upgrade-cluster', 'downloading script from https://get.k3s.io...')
+        try:
+            dl_k3s = requests.get('https://get.k3s.io')
+            open(get_k3s_path, 'wb').write(dl_k3s.content)
+        except Exception:
+            kabort('k3s_upgrade-cluster', 'unable to download get k3s script')
+    installer = open(get_k3s_path).read()
+
+    vmids = list_kopsrox_vm()
+
+    # masters one at a time - never more than one down at once
+    for vmid in (masterid, masterid + 1, masterid + 2):
+        if vmid in vmids:
+            k3s_upgrade_node(vmid, 'server', installer)
+
+    # then workers
+    for vmid in sorted(vmids):
+        if vmid > masterid + 3:
+            k3s_upgrade_node(vmid, 'agent', installer)
+
+    kmsg('k3s_upgrade-cluster', f'{cluster_name} upgraded to {k3s_version}', 'sys')
+    cluster_info()
+
+# upgrade one already-running node - pushes the installer and re-runs it with
+# the configured version ( no SKIP_START/SKIP_ENABLE this time - the
+# installer restarts the service itself once it detects the binary changed )
+def k3s_upgrade_node(vmid: int, role: str, installer: str) -> None:
+    vmname = vmnames[vmid]
+    with kstep('k3s_upgrade', f'upgrading {vmname} to {k3s_version}') as step:
+        qa_write(vmid, '/root/k3s-upgrade.sh', installer, '755')
+        qa_exec(vmid, f'INSTALL_K3S_VERSION={k3s_version} /root/k3s-upgrade.sh {role} > /k3s_upgrade.log 2>&1')
+        qa_exec(vmid, 'rm -f /root/k3s-upgrade.sh')
+        step.msg = f'waiting for {vmname} Ready'
+        k3s_wait_ready(vmid, vmname)
 
 # kubeconfig
 def kubeconfig() -> None:

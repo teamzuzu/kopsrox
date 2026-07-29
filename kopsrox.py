@@ -34,6 +34,7 @@ cmds = {
         "check-config": '',
         "kubectl": 'cmd',
         "reload-kubevip": '',
+        "upgrade": '',
     },
     "etcd": {
         "snapshot": '',

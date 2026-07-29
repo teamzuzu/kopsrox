@@ -3,6 +3,7 @@
 from kopsrox_k3s import (
     export_k3s_token,
     k3s_check_config,
+    k3s_upgrade_cluster,
     kubeconfig,
     kubectl,
     reload_kubevip,
@@ -27,6 +28,13 @@ def run(cmd: str, arg: str | None = None) -> None:
     # reload kubevip
     if cmd == 'reload-kubevip':
         reload_kubevip()
+
+    # upgrade every live node to the configured k3s_version, then rebuild the
+    # image so future clones match too
+    if cmd == 'upgrade':
+        k3s_upgrade_cluster()
+        from verb_image import image_create
+        image_create()
 
     # kubectl
     if cmd == 'kubectl':
