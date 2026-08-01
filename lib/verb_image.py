@@ -23,6 +23,7 @@ from kopsrox_config import (
     microvm_initrd,
     microvm_kernel,
     network_dns,
+    nfs_server,
     oci_image,
     prox,
     proxmox_node,
@@ -186,9 +187,15 @@ fi''').stdout.strip()
         qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
         qa_write(cluster_id, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
         qa_write(cluster_id, '/etc/resolv.conf', f'nameserver {network_dns}\n')
-        if extra_packages:
-            packages = extra_packages.replace(',', ' ')
-            qa_exec(cluster_id, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {packages} 2>/dev/null')
+        # the nfs storageclass mounts via kubelet on the host, which needs the
+        # /sbin/mount.nfs helper from nfs-common - the built-in kernel nfs client
+        # is not enough. pull it in whenever nfs_server is set, regardless of
+        # what extra_packages says ( it may be blank or omit nfs-common )
+        packages = [p for p in extra_packages.replace(',', ' ').split() if p]
+        if nfs_server != '' and 'nfs-common' not in packages:
+            packages.append('nfs-common')
+        if packages:
+            qa_exec(cluster_id, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {" ".join(packages)} 2>/dev/null')
         qa_exec(cluster_id, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
         qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
 
