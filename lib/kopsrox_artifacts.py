@@ -10,6 +10,8 @@ from kopsrox_config import (
     cluster_name,
     masterid,
     network_ip,
+    nfs_path,
+    nfs_server,
     region_string,
     s3_endpoint,
     vmip,
@@ -39,8 +41,138 @@ spec:
     # no proxmox cloud controller or csi driver on microvm
     # - the guest has no dmi so the ccm smbios uuid check can never pass
     # - the csi driver needs disk hotplug which pve-microvm does not support yet
-    # storage is provided by the k3s local-path provisioner instead
+    # default storage is the k3s local-path provisioner
+
+    # optional external-nfs backed 'nfs' storageclass ( opt-in via nfs_server )
+    # - nfs-subdir-external-provisioner: one deployment + storageclass, a
+    #   subdirectory per pv under a single export. needs no disk hotplug so the
+    #   microvm csi limitation above does not apply. the kopsrox kernel bakes in
+    #   the nfs client ( CONFIG_NFS_FS/V4 ) and nfs-common is a default package
+    # - not annotated is-default-class, so local-path stays the cluster default;
+    #   pods opt in with storageClassName: nfs
+    # - archiveOnDelete true renames the backing dir to archived-* on pvc delete
+    #   rather than purging it, so data survives an accidental delete
+    if nfs_server != '':
+        manifest += kopsrox_nfs_manifest()
+
     return manifest
+
+# nfs-subdir-external-provisioner artifacts - appended to the cluster manifest
+# only when nfs_server is configured ( see kopsrox_manifest above )
+def kopsrox_nfs_manifest() -> str:
+    return f'''
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfs-client-provisioner-runner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: run-nfs-client-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: kube-system
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: kube-system
+roleRef:
+  kind: Role
+  name: leader-locking-nfs-client-provisioner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-client-provisioner
+  namespace: kube-system
+  labels:
+    app: nfs-client-provisioner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner
+    spec:
+      serviceAccountName: nfs-client-provisioner
+      containers:
+        - name: nfs-client-provisioner
+          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          volumeMounts:
+            - name: nfs-client-root
+              mountPath: /persistentvolumes
+          env:
+            - name: PROVISIONER_NAME
+              value: k8s-sigs.io/nfs-subdir-external-provisioner
+            - name: NFS_SERVER
+              value: {nfs_server}
+            - name: NFS_PATH
+              value: {nfs_path}
+      volumes:
+        - name: nfs-client-root
+          nfs:
+            server: {nfs_server}
+            path: {nfs_path}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs
+provisioner: k8s-sigs.io/nfs-subdir-external-provisioner
+reclaimPolicy: Delete
+parameters:
+  archiveOnDelete: "true"'''
 
 # k3s config file ( /etc/rancher/k3s/config.yaml ) - role-aware since the
 # systemd units baked into the image at build time carry no node-specific
