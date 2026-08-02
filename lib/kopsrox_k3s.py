@@ -386,10 +386,10 @@ def export_k3s_token(restore: bool = False) -> None:
     # get masters token
     live_token = qa_exec(masterid, 'cat /var/lib/rancher/k3s/server/token')
 
-    # check existing token
-    if os.path.isfile(token_name):
+    # check existing token ( get_k3s_token flags a stray line break / CR )
+    saved_token = get_k3s_token()
+    if saved_token is not None:
 
-        saved_token = open(token_name, "r").read()
         # difference between live and local token
         if not saved_token == live_token:
 

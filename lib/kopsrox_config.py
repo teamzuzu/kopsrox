@@ -60,7 +60,18 @@ def list_kopsrox_vm() -> dict[int, str]:
 def get_k3s_token() -> str | None:
     token_fname = f'{cluster_name}.k3stoken'
     if os.path.isfile(token_fname):
-        return open(token_fname, "r").read()
+        raw = open(token_fname, "r").read()
+        # a k3s token is a single line ( K10<ca-hash>::server:<password> ).
+        # an imported/hand-edited file often carries a trailing newline or a
+        # windows carriage return - k3s itself strips it so the cluster comes
+        # up fine, but the raw read here keeps it, so export_k3s_token's exact
+        # and password comparisons fail with a misleading 'passwords different'.
+        # flag it up front instead, before it bootstraps anything
+        if '\r' in raw or '\n' in raw:
+            kabort(f'{cluster_name}_token', f'{token_fname} contains a line break or carriage return - '
+                   f'a k3s token must be a single line with no trailing newline '
+                   f"( fix: printf '%s' \"$(cat {token_fname})\" > {token_fname} )")
+        return raw
 
 # return ip for vmid
 def vmip(vmid: int) -> str:
