@@ -15,8 +15,6 @@ def fresh_parser():
   render_ini().write(rendered)
   parser = ConfigParser()
   parser.read_string(rendered.getvalue())
-  # default endpoint is deliberately localhost so users must edit it - patch for clean runs
-  parser.set('kopsrox', 'proxmox_endpoint', '192.168.0.5')
   return parser
 
 # expect validate() to abort with exit code 1
@@ -39,7 +37,7 @@ for entry in SCHEMA:
   else:
     assert rendered_config.has_option('kopsrox', entry['name']), f"{entry['name']} missing from rendered ini"
 
-# defaults round-trip through validate ( with the endpoint patched )
+# defaults round-trip through validate
 values = validate(fresh_parser())
 assert values['cluster_name'] == 'mycluster', values['cluster_name']
 assert values['cluster_id'] == 620 and type(values['cluster_id']) is int
@@ -61,7 +59,6 @@ expect_abort(lambda p: p.set('kopsrox', 'localuser', ''))
 expect_abort(lambda p: p.set('kopsrox', 'vm_ram', 'x'))
 expect_abort(lambda p: p.set('kopsrox', 'masters', '2'))
 expect_abort(lambda p: p.set('kopsrox', 'cluster_id', '99'))
-expect_abort(lambda p: p.set('kopsrox', 'proxmox_endpoint', 'localhost'))
 expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'notakey'))
 expect_abort(lambda p: p.set('kopsrox', 'vm_cpu', '0'))
 expect_abort(lambda p: p.set('kopsrox', 'vm_disk', '10'))

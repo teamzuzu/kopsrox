@@ -9,10 +9,6 @@ from configparser import ConfigParser
 from kopsrox_kmsg import kabort
 
 # validators - called as check(kname, value) after type coercion
-def check_endpoint(kname: str, value: str) -> None:
-    if ( value == "localhost" or value == "127.0.0.1" ):
-        kabort(kname, f'proxmox_endpoint cannot be localhost - please use a reachable IP')
-
 def check_cluster_id(kname: str, value: int) -> None:
     if value < 100:
         kabort(kname, f'cluster_id is too low - should be over 100')
@@ -48,7 +44,7 @@ def opt(name, comment, default, kind = str, blank_ok = False, commented = False,
 
 # every kopsrox.ini option in ini order - adding an option means adding one entry here
 SCHEMA = [
-    opt('proxmox_endpoint', 'domain or IP to access proxmox', '127.0.0.1', check = check_endpoint),
+    opt('proxmox_endpoint', 'domain or IP to access proxmox', '127.0.0.1'),
     opt('proxmox_api_port', 'api port ( usually 8006 ) ', '8006', kind = int),
     opt('proxmox_user', 'username to connect with / owner of the API token', 'root@pam'),
     opt('proxmox_token_name', 'name of api token', 'kopsrox'),
