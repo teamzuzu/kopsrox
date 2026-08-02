@@ -2,7 +2,8 @@
 
 # kopsrox config schema - single source of truth for every kopsrox.ini option
 # pure module: no proxmox, no argv, no side effects
-# imported by kopsrox_config ( validation ), kopsrox_ini ( default ini ) and dev/test_config.py
+# imported by kopsrox_config ( validation ) and dev/test_config.py; also renders
+# and writes the default kopsrox.ini itself ( render_ini / init_kopsrox_ini )
 # it must never import kopsrox_config - the default ini is generated exactly when kopsrox.ini is missing
 
 from configparser import ConfigParser
@@ -150,3 +151,9 @@ def render_ini() -> ConfigParser:
         config.set(ks, name, value)
 
     return config
+
+# write the default kopsrox.ini - called by kopsrox.py when none exists yet
+def init_kopsrox_ini() -> None:
+    with open('kopsrox.ini', 'w') as cfile:
+        render_ini().write(cfile)
+    print('created kopsrox.ini please edit for your setup')

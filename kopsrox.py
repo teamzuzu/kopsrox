@@ -5,7 +5,7 @@ import os, sys
 sys.path[0:0] = ['lib/']
 
 # kopsrox
-from kopsrox_ini import init_kopsrox_ini
+from kopsrox_schema import init_kopsrox_ini
 from kopsrox_kmsg import kmsg
 
 # check file exists
