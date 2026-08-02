@@ -143,10 +143,11 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 ./kopsrox.py etcd list
 ```
 
-**Restore it.** Rebuilds the whole cluster from the latest S3 snapshot, even if every node is gone:
+**Restore it.** Rebuilds the whole cluster from the latest S3 snapshot, even if every node is gone. Pass a snapshot name (from `etcd list`) to restore a specific one:
 
 ```
 ./kopsrox.py cluster restore
+./kopsrox.py cluster restore kopsrox-mycluster-1700000000
 ```
 
 ## Command reference
@@ -164,7 +165,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 - **create** — creates a fresh cluster: clones the template into master (and worker) nodes per `kopsrox.ini`, installs k3s, and exports the kubeconfig and token. Safe to re-run — if a working master already exists, it behaves like `cluster update`.
 - **update** — reconciles the running cluster against `masters` / `workers` in `kopsrox.ini`, adding or draining and removing nodes as needed.
 - **info** — lists VM IDs, hostnames, IPs, and which Proxmox host each node runs on, plus `kubectl get nodes`. Shows which node currently holds the VIP.
-- **restore** — rebuilds the whole cluster from the latest S3 etcd snapshot, even if all nodes are gone. Restores the master, then reconciles the rest per `kopsrox.ini`.
+- **restore [snapshot]** — rebuilds the whole cluster from an S3 etcd snapshot, even if all nodes are gone. Restores the master, then reconciles the rest per `kopsrox.ini`. With no argument it uses the latest snapshot; pass a name (from `etcd list`) to restore a specific one.
 - **destroy** — destroys the cluster immediately, with no confirmation prompt. Workers are drained and removed first, then masters. The image template and utility node are left alone.
 
 ### k3s
@@ -179,8 +180,9 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 - **snapshot** — takes an etcd snapshot and uploads it to the configured S3 storage.
 - **list** — lists this cluster's snapshots in S3.
-- **restore [snapshot]** — restores the cluster from a specific snapshot (names come from `etcd list`). To restore the latest snapshot, use `cluster restore` instead.
 - **prune** — deletes old snapshots according to the retention policy.
+
+Restoring lives under `cluster restore [snapshot]`, not `etcd` — a restore rebuilds every node, not just the datastore.
 
 ### node
 

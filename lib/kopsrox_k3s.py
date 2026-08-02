@@ -51,7 +51,6 @@ def k3s_service(nodetype: str) -> str:
 # wipes the manifests dir along with the rest of /var/lib/rancher.
 # token defaults to the saved token file ( reused so recreating a cluster of
 # the same name is deterministic ) - pass token='' to force a fresh identity
-# ( restore's pre-reset bootstrap needs this, see k3s_init_node )
 def k3s_join(vmid: int, nodetype: str, token: str | None = None) -> None:
     if token is None:
         token = get_k3s_token() or ''
@@ -70,7 +69,7 @@ def k3s_wait_ready(vmid: int, vmname: str) -> None:
     kabort('k3s_check', f'timed out after {wait}s for {vmname}')
 
 # create a master/slave/worker
-def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str = 'kopsrox') -> None:
+def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str | None = None) -> None:
 
     # nodetype error check
     if nodetype not in ['master', 'slave', 'worker', 'restore']:
@@ -96,32 +95,62 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
             k3s_wait_ready(vmid, vmname)
         kplan_tick()
 
-    # restore - bootstrap a fresh single-node master, then reset+restore it
-    # from a snapshot ( 'kopsrox' means find the latest one first ). token=''
-    # forces a genuinely fresh identity for this bootstrap - pinning a saved
-    # token here conflicts with the new CA cluster-reset generates below
+    # restore - bootstrap a throwaway single-node master, list the S3 snapshots
+    # from it ( etcd-snapshot ls needs a running api server to fetch its CA certs ),
+    # then reset+restore etcd from the chosen snapshot. the bootstrap token is ''
+    # ( a throwaway identity ) since the rm -rf below wipes it before the real
+    # restore anyway. the restore then passes the SAVED token to --cluster-reset -
+    # k3s encrypts a snapshot's bootstrap data with the cluster token's password
+    # and can only decrypt it with that same token ( the cluster was created with
+    # the saved token, so its snapshots carry it ). without --token the reset
+    # fatals 'token does not exist' - which, unchecked, once booted a fresh empty
+    # cluster in the restore's place. snapshot=None restores the latest, else named
     if nodetype == 'restore':
-        with kstep('k3s_restore', f'bootstrapping {vmname}') as step:
+        token = get_k3s_token()
+        if not token:
+            kabort('k3s_restore', f'{cluster_name}.k3stoken is required to restore - it must be '
+                   f'the token the target snapshot was taken with, or the bootstrap data cannot be decrypted')
+
+        with kstep('k3s_restore', f'bootstrapping {vmname} to read snapshots') as step:
             k3s_join(vmid, 'master', token='')
             step.msg = f'waiting for {vmname} Ready'
             k3s_wait_ready(vmid, vmname)
 
-            if snapshot == 'kopsrox':
-                step.msg = 'looking up latest snapshot'
-                ls_out = qa_exec(vmid, '/usr/local/bin/k3s etcd-snapshot ls 2>&1')
+            # select / validate the snapshot from the s3 repo. the destroy already
+            # happened, but a restore discards current state by definition, so a
+            # bad name just means re-running with the right one
+            step.msg = 'listing snapshots'
+            ls_out = qa_exec(vmid, '/usr/local/bin/k3s etcd-snapshot ls 2>&1')
+            available = sorted(line.split()[0] for line in ls_out.split('\n')
+                               if line.split() and re.search(f'kopsrox-{cluster_name}', line.split()[0]))
+            if not available:
+                kabort('k3s_restore', f'no snapshots found for {cluster_name} in the s3 repo')
+            if snapshot is None:
+                snapshot = available[-1]
+            elif snapshot not in available:
+                kabort('k3s_restore', f'snapshot "{snapshot}" not found - available:\n' + '\n'.join(available))
 
-                # sort ls output so last is latest snapshot
-                for snap in sorted(ls_out.split('\n')):
-                    if re.search(f'kopsrox-{cluster_name}', snap.split()[0]):
-                        snapshot = snap.split()[0]
+        # name the snapshot up front - the reset below is destructive and slow
+        kmsg('k3s_restore', f'restoring {vmname} from snapshot {snapshot}', 'sys')
 
-            step.msg = f'restoring {snapshot}'
+        with kstep('k3s_restore', f'resetting etcd from {snapshot}') as step:
             qa_exec(vmid, 'systemctl stop k3s')
             qa_exec(vmid, 'rm -rf /var/lib/rancher')
-            qa_exec(vmid, f'/usr/local/bin/k3s server --cluster-reset --cluster-reset-restore-path={snapshot} > /k3s_restore.log 2>&1')
-            # rm -rf above also wiped the manifests dir ( it lives under
-            # /var/lib/rancher ) - without kube-vip's manifest reapplied here
-            # the vip never comes back after a restore
+
+            # --token lets k3s decrypt the snapshot's bootstrap data. the k3s
+            # output is redirected, so read the exit code back and confirm the
+            # reset actually succeeded - otherwise a wrong token / missing snapshot
+            # fatals here and, unchecked, an empty cluster-init cluster boots in
+            # its place ( exactly the 'restored cluster is new' failure this fixes )
+            rc = qa_exec(vmid, f'/usr/local/bin/k3s server --cluster-reset '
+                               f'--cluster-reset-restore-path={snapshot} --token={token} '
+                               f'> /k3s_restore.log 2>&1; echo RC=$?').rsplit('RC=', 1)[-1].strip()
+            restore_log = qa_exec(vmid, 'cat /k3s_restore.log')
+            if rc != '0' or re.search('level=fatal', restore_log):
+                kabort('k3s_restore', f'snapshot restore failed ( rc={rc} ) - /k3s_restore.log on {vmname}:\n{restore_log}')
+
+            # the reset wiped /var/lib/rancher, taking the baked-in manifests dir
+            # with it - reapply kube-vip/traefik or the vip never comes back
             qa_exec(vmid, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
             qa_write(vmid, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
             qa_exec(vmid, 'systemctl start k3s')
@@ -375,10 +404,11 @@ def k3s_check_config() -> None:
     kcmd = qa_exec(masterid,k3s_cmd)
     print(kcmd)
 
-# export k3s token - restore=True skips the password check: k3s's own
-# --cluster-reset always mints an entirely new token ( not just a new CA ),
-# so a changed password after a restore is expected, not a sign of a
-# different cluster reusing the name
+# export k3s token - restore=True skips the password check. a restore reuses
+# the saved token ( passed to --cluster-reset ), so the password stays the same;
+# only the K10<ca-hash> prefix can differ, if the snapshot's restored CA differs
+# from the one the saved token was last exported under. that is expected after a
+# restore, not a different cluster reusing the name, so don't abort on it
 def export_k3s_token(restore: bool = False) -> None:
 
     # define token file name

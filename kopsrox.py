@@ -38,7 +38,6 @@ cmds = {
     },
     "etcd": {
         "snapshot": '',
-        "restore": 'snapshot',
         "list": '',
         "prune": '',
     },

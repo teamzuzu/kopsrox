@@ -3,16 +3,8 @@
 import re
 
 from kopsrox_config import bucket, cluster_name, get_k3s_token, masterid, s3_endpoint, vms
-from kopsrox_k3s import (
-    export_k3s_token,
-    k3s_init_node,
-    k3s_rm_cluster,
-    k3s_update_cluster,
-    kubeconfig,
-    kubectl,
-)
 from kopsrox_kmsg import kabort, kmsg
-from kopsrox_proxmox import clone, qa_exec
+from kopsrox_proxmox import qa_exec
 
 
 # run k3s s3 command passed
@@ -115,41 +107,3 @@ def run(cmd: str, arg: str | None = None) -> None:
     if cmd == 'list':
         s3_list(cmd, snapshots)
         exit(0)
-
-    # restore / list snapshots
-    if cmd == 'restore':
-
-        # restore snapshot
-        snapshot = arg
-
-        # check passed snapshot name exists
-        if not re.search(snapshot, snapshots):
-            kmsg(kname, f'{snapshot} not found', 'err')
-            s3_list(cmd, snapshots)
-            exit(1)
-
-        # info
-        kmsg(kname, f'restoring {snapshot}', 'sys')
-        k3s_rm_cluster()
-        clone(masterid)
-        k3s_init_node(masterid, 'restore', snapshot)
-
-        # delete extra nodes in the restored cluster
-        nodes = kubectl('get nodes').split()
-
-        # for each of returned nodes from kubectl
-        for node in nodes:
-
-            # if matches cluster name and not master node
-            if re.search(f'{cluster_name}-', node) and (node != f'{cluster_name}-m1'):
-                kmsg(kname, f'removing stale node {node}', 'sys')
-
-                # need to check this..
-                kubectl(f'delete node {node}')
-
-        # get restored clusters kubeconfig and token
-        kubeconfig()
-        export_k3s_token()
-
-        # run k3s update
-        k3s_update_cluster()

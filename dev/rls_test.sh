@@ -21,7 +21,6 @@ KII="$KI info"
 KE="$K etcd"
 KEL="$KE list"
 KES="$KE snapshot"
-KER="$KE restore"
 
 # change kopsrox config item
 kc() {
@@ -90,7 +89,7 @@ run "image create" $KIC
 run "cluster create" $KCC
 run "cluster update" $KCU
 
-phase "etcd snapshot + restore 📸"
+phase "etcd snapshot + cluster restore 📸"
 run "etcd snapshot" $KES
 run "cluster destroy" $KCD
 run "cluster create" $KCC
@@ -98,7 +97,7 @@ run "cluster create" $KCC
 current_step="parse latest etcd snapshot"
 latest=$($KEL | awk '/^  kopsrox-/ {print $1}' | sort | tail -1)
 [[ -n $latest ]]
-run "etcd restore $latest" $KER "$latest"
+run "cluster restore $latest" $KCR "$latest"
 
 phase "worker scaling 👷"
 kc workers 1 ; run "scale workers 0 -> 1" $KCU
