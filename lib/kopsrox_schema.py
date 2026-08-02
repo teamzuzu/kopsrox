@@ -80,7 +80,7 @@ SCHEMA = [
     opt('workers', 'number of workers nodes 1 to 5', '1', kind = int),
     opt('k3s_version', 'k3s version', 'v1.34.5+k3s1'),
     opt('kubelet_args', ['comma separated list of kubelet args applied to every node ( eg max-pods=250 )',
-        'blank for none - takes effect on the next node join, no image update needed'], '', blank_ok = True),
+        'blank for none - takes effect on the next node join, no image update needed'], '', blank_ok = True, commented = True),
     opt('s3_endpoint', 's3 endpoint', 'kopsrox'),
     opt('s3_region', 's3 region - leave as \'\' for no region', '', commented = True, var = 'region', ini_value = '\'\''),
     opt('s3_access-key', 's3 access key', 'e3898d39d39id93', var = 'access_key'),
