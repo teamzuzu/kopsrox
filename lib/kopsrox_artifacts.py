@@ -7,7 +7,7 @@ from kopsrox_config import (
     access_key,
     access_secret,
     bucket,
-    cluster_name,
+    kubelet_args,
     masterid,
     network_ip,
     nfs_path,
@@ -179,16 +179,22 @@ parameters:
 # flags ( see verb_image.py ); every join-time flag k3s would otherwise take
 # on the command line is supplied here instead, per k3s's own equivalence
 # between config.yaml keys and CLI flags
-def k3s_config(nodetype: str, vmid: int, token: str = '') -> str:
-    kubelet_arg = f'"provider-id=proxmox://{cluster_name}/{vmid}"'
+def k3s_config(nodetype: str, token: str = '') -> str:
+    # optional kubelet args from the ini ( kubelet_args, comma separated ) -
+    # rendered as a kubelet-arg: yaml list, or omitted entirely when blank.
+    # there is deliberately no provider-id here: it only mattered to the proxmox
+    # ccm/csi ( both dropped - see CLAUDE.md ), and k3s defaults providerID to
+    # k3s://<nodename> which is fine with no cloud provider
+    kubelet_block = ''
+    args = [a.strip() for a in kubelet_args.split(',') if a.strip()]
+    if args:
+        kubelet_block = '\nkubelet-arg:\n' + '\n'.join(f'  - "{a}"' for a in args)
 
     # worker ( agent role ) - no etcd, no cloud-controller-manager, no tls-san
     if nodetype == 'worker':
         return f'''\
 server: https://{network_ip}:6443
-token: {token}
-kubelet-arg:
-  - {kubelet_arg}'''
+token: {token}{kubelet_block}'''
 
     # master bootstraps its own cluster - slave joins an existing one. if a
     # token is passed for master ( eg a saved token from a prior cluster of
@@ -209,10 +215,7 @@ kubelet-arg:
         region_config = f'\netcd-s3-region: {region_string}'
 
     return f'''\
-{join_config}
-kubelet-arg:
-  - {kubelet_arg}
-disable-cloud-controller: true
+{join_config}{kubelet_block}
 tls-san:
   - {network_ip}
   - {vmip(masterid)}

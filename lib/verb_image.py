@@ -19,7 +19,6 @@ from kopsrox_config import (
     localpass,
     localsshkey,
     localuser,
-    masterid,
     microvm_initrd,
     microvm_kernel,
     network_dns,
@@ -115,7 +114,7 @@ def image_create() -> None:
     # actual per-node config.yaml is generated role-aware at join time
     # ( kopsrox_k3s.k3s_join ), this is just for local review
     open(f'./lib/manifests/kopsrox-{cluster_name}.yaml', 'w').write(kopsrox_manifest())
-    open('./lib/manifests/config.yaml', 'w').write(k3s_config('master', masterid))
+    open('./lib/manifests/config.yaml', 'w').write(k3s_config('master'))
 
     # destroy template if it exists
     try:

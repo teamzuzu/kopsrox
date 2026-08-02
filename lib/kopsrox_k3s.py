@@ -57,7 +57,7 @@ def k3s_join(vmid: int, nodetype: str, token: str | None = None) -> None:
         token = get_k3s_token() or ''
     service = k3s_service(nodetype)
     qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
-    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_config(nodetype, vmid, token))
+    qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_config(nodetype, token))
     qa_exec(vmid, f'systemctl enable --now {service} > /k3s_{nodetype}_install.log 2>&1')
 
 # wait for a node to report Ready - each k3s_check is a kubectl run so takes a second or two
