@@ -6,22 +6,12 @@ kopsrox creates and manages highly available [k3s](https://k3s.io) clusters on [
 - Microvms boot in about one second; a fresh HA-capable cluster is ready in roughly 2.5 minutes.
 - Master and worker nodes are added or removed by editing a single config file and running one command.
 - [kube-vip](https://kube-vip.io/) is built in, providing a highly available VIP for the Kubernetes API and Traefik.
-- Storage is provided by the k3s local-path provisioner.
+- Storage is provided by the k3s local-path provisioner, with an optional NFS-backed storage class.
 - etcd snapshots can be pushed to and restored from S3-compatible storage with a single command.
 - All node configuration happens through the QEMU guest agent — no cloud-init and no SSH required, and it works before the node has networking.
 - The kubeconfig and k3s join token are exported automatically after every cluster operation.
 
 Get the latest release: https://github.com/simonccc/kopsrox/releases
-
-## Contents
-
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Getting started](#getting-started)
-- [Command reference](#command-reference)
-- [FAQ](#faq)
-- [Acknowledgements](#acknowledgements)
 
 ## Requirements
 
@@ -36,7 +26,7 @@ Get the latest release: https://github.com/simonccc/kopsrox/releases
 Install the Python dependencies:
 
 ```
-sudo apt install python3-termcolor python3-proxmoxer python3-requests -y
+sudo apt install python3-proxmoxer python3-requests python3-urllib3 -y
 ```
 
 Install pve-microvm — see the [pve-microvm installation docs](https://github.com/rcarmo/pve-microvm/blob/main/docs/installation.md):
@@ -75,6 +65,7 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 | `oci_image` | The OCI image nodes are built from. The default `ubuntu:24.04` is well-tested; other apt-based images should work but are untested. |
 | `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create`/`update` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image update` to take effect. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
+| `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image update`. |
 | `s3_*` | S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. |
 
 ### VM ID and IP layout
@@ -207,7 +198,7 @@ Microvm guests boot a kernel supplied by the host and have no `/lib/modules`, so
 
 **What happened to the Proxmox CSI driver and cloud controller manager?**
 
-Neither works on microvm. The guest has no DMI/SMBIOS, so the cloud controller's identity check can never pass, and the CSI driver needs disk hotplug into running guests, which pve-microvm doesn't support yet. kopsrox sets the node `--provider-id` directly and uses the k3s local-path provisioner for storage instead. NFS also works fine (`extra_packages = nfs-common` is the default, and the kernel has the NFS client built in).
+Neither works on microvm. The guest has no DMI/SMBIOS, so the cloud controller's identity check can never pass, and the CSI driver needs disk hotplug into running guests, which pve-microvm doesn't support yet. Both were dropped: k3s runs its own embedded cloud-controller-manager (node providerIDs default to `k3s://<nodename>`), and storage is the k3s local-path provisioner. An optional NFS-backed storage class is available too — set `nfs_server`/`nfs_path` in `kopsrox.ini` (`extra_packages = nfs-common` is the default, and the kernel has the NFS client built in).
 
 **`qm shutdown` / `qm reboot` don't work from the Proxmox UI.**
 
