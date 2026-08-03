@@ -8,15 +8,6 @@ from kopsrox_kmsg import kabort, kmsg, kstep
 from kopsrox_proxmox import clone, node_reboot_wait, qa_exec
 
 
-# cmd runs through all vms
-def node_cluster_exec(arg: str | None) -> None:
-    for vmid in vms:
-        if vmid != cluster_id:
-            kmsg('node_cluster-exec', f'{vmnames[vmid]} {arg}')
-            os.system(f'sudo qm guest exec {vmid} {arg}')
-    exit(0)
-
-
 # terminal
 def node_terminal(vmid: int) -> None:
     kmsg('node_terminal', f'root autologin on console - or u/p: {localuser} / {localpass}', 'sys')
@@ -93,10 +84,6 @@ def run(cmd: str, arg: str | None = None) -> None:
 
     # define kname
     kname = 'node_' + cmd
-
-    # cmd runs through all vms
-    if cmd == 'cluster-exec':
-        node_cluster_exec(arg)
 
     # all commands aside from utility require a hostname passed - so check them here
     if cmd not in ['utility']:

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-from kopsrox_config import cluster_id, cluster_name, get_k3s_token, list_kopsrox_vm, masterid, masters, network_ip, vmnames, workers
+import os
+
+from kopsrox_config import cluster_id, cluster_name, get_k3s_token, list_kopsrox_vm, masterid, masters, network_ip, vmnames, vms, workers
 from kopsrox_k3s import cluster_info, cluster_plan_total, k3s_init_node, k3s_rm_cluster, k3s_update_cluster, kubectl
 from kopsrox_kmsg import kabort, kmsg, kplan
 from kopsrox_proxmox import clone
@@ -59,6 +61,15 @@ def cluster_create() -> None:
     k3s_update_cluster()
 
 
+# run a command on every node ( skips the image template ) via the guest agent
+def cluster_exec(arg: str | None) -> None:
+    for vmid in vms:
+        if vmid != cluster_id:
+            kmsg('cluster_exec', f'{vmnames[vmid]} {arg}')
+            os.system(f'sudo qm guest exec {vmid} {arg}')
+    exit(0)
+
+
 # destroy the cluster
 def cluster_destroy() -> None:
     kname = 'cluster_destroy'
@@ -82,6 +93,10 @@ def run(cmd: str, arg: str | None = None) -> None:
     # restore from an etcd snapshot - optional snapshot name, latest when omitted
     if cmd == 'restore':
         cluster_restore(arg)
+
+    # run a command on every node
+    if cmd == 'exec':
+        cluster_exec(arg)
 
     # create new cluster / master server
     if cmd == 'create':

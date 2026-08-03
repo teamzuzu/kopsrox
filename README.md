@@ -157,6 +157,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 - **update** — reconciles the running cluster against `masters` / `workers` in `kopsrox.ini`, adding or draining and removing nodes as needed.
 - **info** — lists VM IDs, hostnames, IPs, and which Proxmox host each node runs on, plus `kubectl get nodes`. Shows which node currently holds the VIP.
 - **restore [snapshot]** — rebuilds the whole cluster from an S3 etcd snapshot, even if all nodes are gone. Restores the master, then reconciles the rest per `kopsrox.ini`. With no argument it uses the latest snapshot; pass a name (from `etcd list`) to restore a specific one.
+- **exec [command]** — runs a command on every node via the guest agent.
 - **destroy** — destroys the cluster immediately, with no confirmation prompt. Workers are drained and removed first, then masters. The image template and utility node are left alone.
 
 ### k3s
@@ -184,7 +185,6 @@ Restoring lives under `cluster restore [snapshot]`, not `etcd` — a restore reb
 - **destroy [hostname]** — drains, removes, and deletes the node immediately, with no confirmation prompt.
 - **k3s-uninstall [hostname]** — uninstalls k3s from the node, useful for experimenting with reinstalls.
 - **rejoin-slave [hostname]** — reinstalls k3s on a master and rejoins it to the cluster.
-- **cluster-exec [command]** — runs a command on every node via the guest agent.
 
 ## FAQ
 

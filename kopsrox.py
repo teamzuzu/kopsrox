@@ -27,6 +27,7 @@ cmds = {
         "update": '',
         "destroy": '',
         'restore': '',
+        "exec": 'command',
     },
     "k3s": {
         "export-token": '',
@@ -49,7 +50,6 @@ cmds = {
         "reboot": 'hostname',
         "k3s-uninstall": 'hostname',
         "rejoin-slave": 'hostname',
-        "cluster-exec": 'command',
     }
 }
 
@@ -104,7 +104,7 @@ if cmds[verb][cmd] and len(sys.argv) < 4:
 
 # argument for commands that take one ( validated above )
 # joined ( not just argv[3] ) so unquoted multi-word commands keep working -
-# eg './kopsrox.py k3s kubectl get pods -A' or 'node cluster-exec <command>'
+# eg './kopsrox.py k3s kubectl get pods -A' or 'cluster exec <command>'
 arg = ' '.join(sys.argv[3:]) if len(sys.argv) > 3 else None
 
 # staged config checks, then dispatch
