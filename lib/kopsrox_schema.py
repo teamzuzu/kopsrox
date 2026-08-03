@@ -6,6 +6,8 @@
 # and writes the default kopsrox.ini itself ( render_ini / init_kopsrox_ini )
 # it must never import kopsrox_config - the default ini is generated exactly when kopsrox.ini is missing
 
+import base64, struct
+
 from configparser import ConfigParser
 from kopsrox_kmsg import kabort
 
@@ -26,9 +28,30 @@ def check_vm_ram(kname: str, value: int) -> None:
     if value < 2:
         kabort(kname, f'vm_ram - kopsrox vms need 2G RAM')
 
+# recognised openssh public-key type prefixes ( authorized_keys format )
+SSH_KEY_TYPES = ('ssh-rsa', 'ssh-ed25519', 'ssh-dss',
+                 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521',
+                 'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com')
+
+# validate a real openssh public key, not just an 'ssh-' prefix: the key type
+# must be recognised, the base64 blob must decode, and the algorithm name encoded
+# in the blob ( first length-prefixed field ) must match the type - this catches
+# a truncated / corrupt / mis-pasted key that a prefix check would wave through
 def check_sshkey(kname: str, value: str) -> None:
-    if not value.startswith('ssh-'):
-        kabort(kname, f'[kopsrox]/localsshkey - invalid ssh key')
+    err = ('[kopsrox]/localsshkey - not a valid ssh public key ( openssh '
+           'authorized_keys format eg "ssh-ed25519 AAAAC3... user@host" )')
+    parts = value.split()
+    if len(parts) < 2 or parts[0] not in SSH_KEY_TYPES:
+        kabort(kname, err)
+    keytype, blob = parts[0], parts[1]
+    try:
+        raw = base64.b64decode(blob, validate = True)
+        length = struct.unpack('>I', raw[:4])[0]
+        embedded = raw[4:4 + length].decode()
+    except Exception:
+        kabort(kname, err)
+    if embedded != keytype:
+        kabort(kname, err)
 
 def check_masters(kname: str, value: int) -> None:
     if not (value == 1 or value == 3):
