@@ -2,7 +2,7 @@
 
 kopsrox creates and manages highly available [k3s](https://k3s.io) clusters on [Proxmox VE](https://www.proxmox.com/), using lightweight microvms from [pve-microvm](https://github.com/rcarmo/pve-microvm).
 
-- Nodes are microvms built from a plain OCI image (default `ubuntu:24.04`) — no ISOs or cloud images required.
+- Nodes are microvms built from a plain OCI image (default `ubuntu:26.04`) — no ISOs or cloud images required.
 - Microvms boot in about one second; a fresh HA-capable cluster is ready in roughly 2.5 minutes.
 - Master and worker nodes are added or removed by editing a single config file and running one command.
 - [kube-vip](https://kube-vip.io/) is built in, providing a highly available VIP for the Kubernetes API and Traefik.
@@ -62,7 +62,7 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 
 | Option | Purpose |
 | --- | --- |
-| `oci_image` | The OCI image nodes are built from. The default `ubuntu:24.04` is well-tested; other apt-based images should work but are untested. |
+| `oci_image` | The OCI image nodes are built from. The default `ubuntu:26.04` is well-tested; other apt-based images should work but are untested. |
 | `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create`/`update` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image update` to take effect. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
 | `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image update`. |
