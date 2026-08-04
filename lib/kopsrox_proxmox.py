@@ -180,10 +180,15 @@ def node_prepare(vmid: int) -> None:
 
     with kstep(kname, f'configuring {vmname}'):
 
-        # every pre-reboot step below is bundled into one script and run via
-        # a single qa_exec call - each guest-agent round trip has a fixed
-        # ~0.5-1s protocol cost regardless of what it does, and this used to
-        # be ~15 separate calls ( qa_write() alone is a write + a chmod )
+        # every step below is bundled into one script and run via a single
+        # qa_exec call - each guest-agent round trip has a fixed ~0.5-1s protocol
+        # cost regardless of what it does, and this used to be ~15 separate calls
+        # ( qa_write() alone is a write + a chmod ). identity ( machine-id,
+        # hostname ) and the static network are applied LIVE at the end of the
+        # script - no reboot: the agent is on virtio-serial so it survives the
+        # ip swap, and a reboot only added 8-35s of variable virtio-serial
+        # reconnect latency ( sometimes wedging the agent ) for no change in the
+        # resulting state ( verified: a later reboot converges to the same thing )
         prepare_sh = f'''\
 #!/bin/sh
 # neutralise pve-microvm first boot services
@@ -240,26 +245,36 @@ chmod 644 /etc/systemd/system/kopsrox-net.service
 systemctl enable kopsrox-net.service 2>/dev/null
 
 # hostname - must match vmnames for k3s node operations
+# set live too ( hostnamectl ) so the running system picks it up without a reboot
 echo '{vmname}' > /etc/hostname
 chmod 644 /etc/hostname
 sed -i /{vmname}/d /etc/hosts
 echo 127.0.1.1 {vmname} >> /etc/hosts
+hostnamectl set-hostname '{vmname}' 2>/dev/null
 
-# fresh machine-id per clone - regenerated on boot
+# fresh, unique machine-id per clone - committed now ( systemd-machine-id-setup )
+# rather than blanked for boot-time regen, since nothing reboots this node
 rm -f /etc/machine-id /var/lib/dbus/machine-id
-touch /etc/machine-id
+systemd-machine-id-setup
+ln -sf /etc/machine-id /var/lib/dbus/machine-id
 
 # grow the root filesystem to the resized disk - partitionless ext4
 resize2fs /dev/vda 2>/dev/null
 
-# mark prepared - a reboot into final state follows this script
+# apply the static network live - reconfigure networkd, then the iproute2
+# fallback ( idempotent ip replace ) guarantees the address/route are up
+# synchronously so the verification below passes without waiting on networkd
+systemctl enable --now systemd-networkd 2>/dev/null
+networkctl reload 2>/dev/null
+networkctl reconfigure eth0 2>/dev/null
+/root/scripts/kopsrox-net.sh 2>/dev/null
+
+# mark prepared - the node is now in its final state, no reboot needed
 touch /etc/kopsrox-node-init-done
 exit 0
 '''
         qa_write(vmid, '/root/kopsrox-prepare.sh', prepare_sh, '755')
         qa_exec(vmid, '/root/kopsrox-prepare.sh > /kopsrox-prepare.log 2>&1; rm -f /root/kopsrox-prepare.sh')
-
-        node_reboot_wait(vmid)
 
         # verify static ip applied
         ip_out = qa_exec(vmid, 'ip -4 addr show')
