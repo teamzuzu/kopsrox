@@ -134,8 +134,7 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
         kmsg('k3s_restore', f'restoring {vmname} from snapshot {snapshot}', 'sys')
 
         with kstep('k3s_restore', f'resetting etcd from {snapshot}') as step:
-            qa_exec(vmid, 'systemctl stop k3s')
-            qa_exec(vmid, 'rm -rf /var/lib/rancher')
+            qa_exec(vmid, 'systemctl stop k3s && rm -rf /var/lib/rancher/')
 
             # --token lets k3s decrypt the snapshot's bootstrap data. the k3s
             # output is redirected, so read the exit code back and confirm the
