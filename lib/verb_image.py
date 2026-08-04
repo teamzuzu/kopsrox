@@ -27,6 +27,8 @@ from kopsrox_config import (
     prox,
     proxmox_node,
     proxmox_storage,
+    vm_cpu,
+    vm_ram,
 )
 from kopsrox_kmsg import kabort, kmsg, kplan, kplan_tick, kstep
 from kopsrox_proxmox import prox_destroy, prox_task, qa_exec, qa_write
@@ -42,9 +44,10 @@ def patch_microvm_template() -> str:
 
     # patches as ( old, new ) - each must match or upstream changed and we bail
     patches = [
-        # always write dns for the chroot - the guard misses empty files
+        # always write dns for the chroot - the guard misses empty files -
+        # and use the configured network_dns, not upstream's hardcoded 1.1.1.1
         ('[ -f "$ROOTFS_DIR/etc/resolv.conf" ] || echo "nameserver 1.1.1.1"',
-         'echo "nameserver 1.1.1.1"'),
+         f'echo "nameserver {network_dns}"'),
         # surface apt errors into the build log
         ('apt-get update -qq 2>/dev/null',
          'apt-get update -qq'),
@@ -129,8 +132,8 @@ def image_create() -> None:
     microvm_template = patch_microvm_template()
     with kstep(f'{kname}template', f'running {microvm_template} ( log: kopsrox-image.log )'):
         local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
---name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 2G --memory 1024 \
---cores 1 --profile standard --no-docker > kopsrox-image.log 2>&1')
+--name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 4G --memory {vm_ram * 1024} \
+--cores {vm_cpu} --profile standard --no-docker > kopsrox-image.log 2>&1')
     kplan_tick()
 
     # the template build hides chroot failures - verify the guest actually has
