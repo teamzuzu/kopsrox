@@ -38,10 +38,6 @@ spec:
       spec:
         loadBalancerIP: "{network_ip}"'''
 
-    # no proxmox cloud controller or csi driver on microvm
-    # - the guest has no dmi so the ccm smbios uuid check can never pass
-    # - the csi driver needs disk hotplug which pve-microvm does not support yet
-    # default storage is the k3s local-path provisioner
 
     # optional external-nfs backed 'nfs' storageclass ( opt-in via nfs_server )
     # - nfs-subdir-external-provisioner: one deployment + storageclass, a
@@ -225,8 +221,9 @@ write-kubeconfig-mode: "0644"
 embedded-registry: true
 disable:
   - servicelb
+disable-network-policy: true
 etcd-s3: true
-etcd-disable-snapshot: true
+etcd-disable-snapshots: true
 etcd-snapshot-retention: 7
 etcd-s3-endpoint: {s3_endpoint}
 etcd-s3-access-key: {access_key}
