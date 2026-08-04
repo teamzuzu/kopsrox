@@ -63,9 +63,9 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 | Option | Purpose |
 | --- | --- |
 | `oci_image` | The OCI image nodes are built from. The default `ubuntu:26.04` is well-tested; other apt-based images should work but are untested. |
-| `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create`/`update` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image update` to take effect. |
+| `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image create` to take effect. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
-| `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image update`. |
+| `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image create`. |
 | `s3_*` | S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. |
 
 ### VM ID and IP layout
@@ -147,7 +147,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 ### image
 
-- **create / update** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, and the kube-vip/traefik manifest - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image update`, not on the next node join.
+- **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch if a template already exists. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, and the kube-vip/traefik manifest - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
 - **info** — prints the template description (source image, k3s version, creation time) and its storage volume.
 - **destroy** — deletes the image template.
 

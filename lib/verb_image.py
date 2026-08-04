@@ -89,7 +89,7 @@ def patch_microvm_template() -> str:
     return patched_path
 
 
-# create image ( update is an alias )
+# create image ( rebuilds from scratch if one already exists )
 def image_create() -> None:
     kname = 'image_'
 
@@ -237,8 +237,8 @@ def image_destroy() -> None:
 
 def run(cmd: str, arg: str | None = None) -> None:
 
-    # create image ( update is an alias )
-    if cmd in ['create', 'update']:
+    # create image ( rebuilds from scratch if one already exists )
+    if cmd == 'create':
         image_create()
 
     # image info

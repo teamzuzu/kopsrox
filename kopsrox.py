@@ -18,7 +18,6 @@ cmds = {
     "image": {
         "info": '',
         "create": '',
-        "update": '',
         "destroy": '',
     },
     "cluster": {
