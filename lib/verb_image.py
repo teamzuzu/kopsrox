@@ -59,8 +59,11 @@ def patch_microvm_template() -> str:
         # sudo - saves an apt-get run on every node create
         # systemd-timesyncd - no ntp in the oci image
         # ( dbus is upstream since pve-microvm 0.3.19 )
+        # drop isc-dhcp-client - unused on the apt path ( networkd's built-in
+        # dhcp client serves the fresh clone's initial lease, then node_prepare
+        # switches to static; upstream's dhclient fallback is alpine/fedora only )
         ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
-         'PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd"'),
+         'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd"'),
         # with udev installed serial-getty would start and fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
          'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
