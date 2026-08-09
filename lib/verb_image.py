@@ -201,7 +201,10 @@ fi''').stdout.strip()
             packages.append('nfs-common')
         if packages:
             qa_exec(cluster_id, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {" ".join(packages)} 2>/dev/null')
-        qa_exec(cluster_id, 'mkdir -p /var/lib/rancher/k3s/server/manifests')
+        # /etc/rancher/k3s holds each node's config.yaml, written at join time -
+        # bake the dir in so k3s_join() only has to push the file ( the agent
+        # file-write api does not create parent dirs )
+        qa_exec(cluster_id, 'mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests')
         qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
 
         # graceful agent-driven shutdown ( pve-microvm >= 0.3.19, already relied

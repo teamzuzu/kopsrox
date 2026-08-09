@@ -45,17 +45,16 @@ def k3s_service(nodetype: str) -> str:
 
 # write this node's config.yaml and start the systemd unit already baked
 # into the image - no install, no internet dependency at join time, every
-# role-specific flag lives in config.yaml. the kube-vip/traefik manifest is
-# also baked into the image ( verb_image.py ) so a fresh clone needs no
-# write for it here - only the restore path rewrites it, since restoring
-# wipes the manifests dir along with the rest of /var/lib/rancher.
+# role-specific flag lives in config.yaml. the /etc/rancher/k3s dir and the
+# kube-vip/traefik manifest are also baked into the image ( verb_image.py ) so
+# a fresh clone needs no mkdir or manifest write here - only the restore path
+# rewrites the manifest, since restoring wipes /var/lib/rancher.
 # token defaults to the saved token file ( reused so recreating a cluster of
 # the same name is deterministic ) - pass token='' to force a fresh identity
 def k3s_join(vmid: int, nodetype: str, token: str | None = None) -> None:
     if token is None:
         token = get_k3s_token() or ''
     service = k3s_service(nodetype)
-    qa_exec(vmid, 'mkdir -p /etc/rancher/k3s')
     qa_write(vmid, '/etc/rancher/k3s/config.yaml', k3s_config(nodetype, token))
     qa_exec(vmid, f'systemctl enable --now {service} > /k3s_{nodetype}_install.log 2>&1')
 

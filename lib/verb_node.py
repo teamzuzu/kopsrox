@@ -49,7 +49,9 @@ def node_k3s_uninstall(vmid: int) -> None:
     vmname = vmnames[vmid]
     with kstep('node_k3s-uninstall', vmname):
         qa_exec(vmid, '/usr/local/bin/k3s-killall.sh > /k3s_uninstall.log 2>&1')
-        qa_exec(vmid, 'rm -rf /var/lib/rancher /etc/rancher/k3s')
+        # wipe k3s state, then recreate the ( otherwise baked-in ) config dir so
+        # a later k3s_join can push config.yaml into it - k3s_join no longer mkdirs
+        qa_exec(vmid, 'rm -rf /var/lib/rancher /etc/rancher/k3s && mkdir -p /etc/rancher/k3s')
         qa_exec(vmid, f'ip addr del {network_ip}/32 dev eth0 2>/dev/null; true')
         if not k3s_forget_node(vmid):
             kmsg('node_k3s-uninstall', f'no other master up - {vmname} left registered in the cluster', 'sys')
