@@ -30,10 +30,15 @@ def cluster_restore(snapshot: str | None = None) -> None:
 
     # the restored datastore contains stale node objects and node password
     # secrets for nodes that no longer exist - without a cloud controller
-    # nothing garbage collects them and rebuilt nodes get rejected
-    for vmid in vmnames:
-        vmname = vmnames[vmid]
-        if vmname not in [f'{cluster_name}-i0', f'{cluster_name}-m1', f'{cluster_name}-u1']:
+    # nothing garbage collects them and rebuilt nodes get rejected. ask the
+    # restored cluster what nodes it actually has and drop every one except the
+    # master we just restored onto, rather than blindly trying every name in the
+    # kopsrox convention ( which also missed any node named outside it )
+    restored_master = vmnames[masterid]
+    nodes_out = kubectl('get nodes -o name')  # 'node/anchovy-m1\nnode/anchovy-w1'
+    stale = [n.split('/', 1)[-1] for n in nodes_out.split('\n') if n.startswith('node/')]
+    for vmname in stale:
+        if vmname != restored_master:
             kubectl(f'delete node {vmname} --ignore-not-found')
             kubectl(f'-n kube-system delete secret {vmname}.node-password.k3s --ignore-not-found')
 
