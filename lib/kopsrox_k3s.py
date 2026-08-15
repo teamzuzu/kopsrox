@@ -129,6 +129,12 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
             elif snapshot not in available:
                 kabort('k3s_restore', f'snapshot "{snapshot}" not found - available:\n' + '\n'.join(available))
 
+        # bare name only: --cluster-reset-restore-path with an S3 restore fetches by
+        # basename but opens filepath.Join(snapshotDir, path), so an absolute path
+        # doubles the dir ( /snapshots/var/lib/.../snapshots/x.zip ) and fatals -
+        # normalise here so a path can never reach the reset command
+        snapshot = snapshot.rsplit('/', 1)[-1]
+
         # name the snapshot up front - the reset below is destructive and slow
         kmsg('k3s_restore', f'restoring {vmname} from snapshot {snapshot}', 'sys')
 
