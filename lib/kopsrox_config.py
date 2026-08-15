@@ -190,9 +190,10 @@ def init(verb: str, cmd: str) -> None:
 
     # notify if the configured k3s_version differs from what's baked into the
     # image - image content only changes via image create, so editing the ini
-    # alone does not affect a running cluster or new clones until then
+    # alone does not affect a running cluster or new clones until then. skip the
+    # notice on image create itself - that command is what resolves the mismatch
     image_k3s_match = re.search(r'k3s_version: (\S+)', g['cloud_image_desc'])
-    if image_k3s_match and image_k3s_match.group(1) != g['k3s_version']:
+    if not (verb == 'image' and cmd == 'create') and image_k3s_match and image_k3s_match.group(1) != g['k3s_version']:
         kmsg(g['kname'], f'kopsrox.ini k3s_version ({g["k3s_version"]}) differs from the image '
              f'({image_k3s_match.group(1)}) - run "image create" to rebuild, then "k3s upgrade" '
              f'to apply it to the running cluster', 'sys')
