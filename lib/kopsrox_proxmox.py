@@ -402,8 +402,12 @@ def task_log(task_id: str, node: str = proxmox_node) -> str:
 def internet_check(vmid: int) -> None:
     vmname = vmnames[vmid]
     internet_cmd = 'curl -s --retry 2 --retry-all-errors --connect-timeout 1 --max-time 2 www.google.com > /dev/null && echo ok || echo error'
-    internet_check = qa_exec(vmid, internet_cmd)
 
-    # if curl command fails
-    if internet_check == 'error':
-        kabort('proxmox_netcheck', f'{vmname} internet access check failed')
+    # retry up to 5 times - a freshly configured node's route/dns can take a
+    # moment to settle, so a single miss is not yet a failure
+    for attempt in range(5):
+        if qa_exec(vmid, internet_cmd) == 'ok':
+            return
+        time.sleep(1)
+
+    kabort('proxmox_netcheck', f'{vmname} internet access check failed')
