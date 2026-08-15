@@ -230,4 +230,4 @@ etcd-s3-access-key: {access_key}
 etcd-s3-secret-key: {access_secret}
 etcd-s3-bucket: {bucket}
 etcd-s3-skip-ssl-verify: true
-etcd-snapshot-compress: true{region_config}'''
+etcd-snapshot-compress: false{region_config}'''  # compressed .zip snapshots hit a k3s <=1.34 restore path-doubling bug ( see kopsrox_k3s restore )

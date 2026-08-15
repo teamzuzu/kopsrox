@@ -197,6 +197,12 @@ fi''').stdout.strip()
         # is not enough. pull it in whenever nfs_server is set, regardless of
         # what extra_packages says ( it may be blank or omit nfs-common )
         packages = [p for p in extra_packages.replace(',', ' ').split() if p]
+        # unzip lets 'cluster restore' handle a legacy compressed ( .zip ) etcd
+        # snapshot: k3s <=1.34 doubles the path decompressing one itself, so
+        # kopsrox_k3s restore unzips it and restores the plain file ( new
+        # snapshots are uncompressed - etcd-snapshot-compress is off )
+        if 'unzip' not in packages:
+            packages.append('unzip')
         if nfs_server != '' and 'nfs-common' not in packages:
             packages.append('nfs-common')
         if packages:

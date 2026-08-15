@@ -150,6 +150,24 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
                                f'--cluster-reset-restore-path={snapshot} --token={token} '
                                f'> /k3s_restore.log 2>&1; echo RC=$?').rsplit('RC=', 1)[-1].strip()
             restore_log = qa_exec(vmid, 'cat /k3s_restore.log')
+
+            # legacy compressed ( .zip ) snapshot: k3s <=1.34 downloads it from s3
+            # fine but then doubles the path decompressing it ( open .../snapshots/
+            # var/lib/.../snapshots/x.zip ) and fatals. the download left the .zip
+            # on disk, so decompress it and retry from the plain local file with s3
+            # off ( the documented local-restore mode ). new snapshots are
+            # uncompressed ( etcd-snapshot-compress off ) and restore in the pass
+            # above, so this only runs for backups taken before that fix
+            if (rc != '0' or re.search('level=fatal', restore_log)) and snapshot.endswith('.zip'):
+                snapdir = '/var/lib/rancher/k3s/server/db/snapshots'
+                plain = qa_exec(vmid, f'rm -rf /tmp/ksnap && mkdir -p /tmp/ksnap && '
+                                      f'unzip -o {snapdir}/{snapshot} -d /tmp/ksnap > /dev/null 2>&1 && '
+                                      f'echo /tmp/ksnap/$(basename {snapshot} .zip)')
+                rc = qa_exec(vmid, f'/usr/local/bin/k3s server --cluster-reset --etcd-s3=false '
+                                   f'--cluster-reset-restore-path={plain} --token={token} '
+                                   f'> /k3s_restore.log 2>&1; echo RC=$?').rsplit('RC=', 1)[-1].strip()
+                restore_log = qa_exec(vmid, 'cat /k3s_restore.log')
+
             if rc != '0' or re.search('level=fatal', restore_log):
                 kabort('k3s_restore', f'snapshot restore failed ( rc={rc} ) - /k3s_restore.log on {vmname}:\n{restore_log}')
 
