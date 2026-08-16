@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 # kopsrox
+import base64
+import json
 import re
 import time
 
@@ -12,8 +14,8 @@ from kopsrox_config import (
     network_gw,
     network_mask,
     network_mtu,
-    prox,
     proxmox_node,
+    pve_run,
     vm_cpu,
     vm_disk,
     vm_ram,
@@ -38,9 +40,8 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
             kabort(kname, msg)
         return ''
 
-    # get vmname and the node the vm actually runs on
+    # get vmname ( node is always the local one - kept in the signature for callers )
     vmname = vmnames[vmid]
-    node = vms.get(vmid, node)
 
     # display copy of the command - never show k3s tokens on screen
     safe_cmd = re.sub(r'K10\S+', '<token>', cmd)
@@ -52,44 +53,39 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
 
         # wait for the agent - can be slow on first boot
         for _ in range(120):
-            try:
-                prox.nodes(node).qemu(vmid).agent.ping.post()
+            if pve_run(['qm', 'agent', str(vmid), 'ping'], check = False, kname = kname).returncode == 0:
                 break
-            except Exception:
-                time.sleep(1)
+            time.sleep(1)
         else:
-            return fail(f'agent not responding on {vmname} [{node}] cmd: {safe_cmd}')
+            return fail(f'agent not responding on {vmname} cmd: {safe_cmd}')
 
         # agent is up - show the command while it runs
         step.msg = f'{vmname} {short_cmd}'
 
-        # send command
+        # qm guest exec is synchronous ( waits up to --timeout ) and returns the
+        # guest result as json - out-data / err-data / exitcode / exited. argv
+        # list so cmd ( heredocs, quotes, newlines ) needs no escaping. check=False:
+        # a non-zero qm exit is the agent call itself failing, handled below - the
+        # in-guest exit code is inside the json
+        cp = pve_run(['qm', 'guest', 'exec', str(vmid), '--timeout', str(timeout), '--', 'bash', '-c', cmd],
+                     check = False, kname = kname)
+        if cp.returncode != 0:
+            return fail(f'agent exec failed on {vmname}: {safe_cmd}\n{cp.stderr.strip()}')
         try:
-            exec_ret = prox.nodes(node).qemu(vmid).agent.exec.post(command = "bash -c '" + cmd + "'")
-        except Exception as e:
-            return fail(f'problem running cmd: {safe_cmd}\n{e}')
+            result = json.loads(cp.stdout)
+        except Exception:
+            return fail(f'could not parse agent result on {vmname}: {safe_cmd}\n{cp.stdout}')
 
-        # poll until the command exits
-        pid = exec_ret['pid']
-        waited = float(0)
-        while True:
-            try:
-                pid_check = prox.nodes(node).qemu(vmid).agent('exec-status').get(pid = pid)
-            except Exception as e:
-                return fail(f'problem with pid: {pid} {safe_cmd}\n{e}')
-            if pid_check['exited'] == 1:
-                break
-            time.sleep(0.5)
-            waited += 0.5
-            if waited >= timeout:
-                return fail(f'timed out after {timeout}s on {vmname}: {safe_cmd}')
+    # command still running when --timeout hit ( qm returns the pid, not exited )
+    if not result.get('exited'):
+        return fail(f'timed out after {timeout}s on {vmname}: {safe_cmd}')
 
     # check for exitcode 127
-    if int(pid_check['exitcode']) == 127:
-        return fail(f'exit code 127: {pid} {safe_cmd}')
+    if int(result.get('exitcode', 0)) == 127:
+        return fail(f'exit code 127: {safe_cmd}')
 
-    out = (pid_check.get('out-data') or '').strip()
-    err = (pid_check.get('err-data') or '').strip()
+    out = (result.get('out-data') or '').strip()
+    err = (result.get('err-data') or '').strip()
 
     # stderr - report and return stdout if there is any ( probes stay quiet )
     if err:
@@ -111,33 +107,26 @@ def qa_write(vmid: int, remote_path: str, content: str, mode: str = '644') -> No
     # define kname
     kname = 'proxmox_qa_write'
 
-    # get node for vm - fallback to configured node for new clones
-    try:
-        node = vms[vmid]
-    except Exception:
-        node = proxmox_node
+    # base64 the content and feed it to the guest agent over stdin ( --pass-stdin,
+    # max 1 MiB ) into base64 -d - handles arbitrary bytes/quotes/newlines with no
+    # escaping and sets the mode in the same call ( one round trip; was a write +
+    # a chmod ). all kopsrox artifacts are well under 1 MiB so no chunking needed
+    b64 = base64.b64encode(content.encode()).decode()
+    if len(b64) > 1024 * 1024:
+        kabort(kname, f'{remote_path} too large for a single agent write ({len(b64)} b64 bytes > 1 MiB)')
 
-    # pve api file-write content limit
-    chunk_size = 40960
+    cp = pve_run(['qm', 'guest', 'exec', str(vmid), '--pass-stdin', '1', '--timeout', '60',
+                  '--', 'bash', '-c', f'base64 -d > {remote_path} && chmod {mode} {remote_path}'],
+                 input = b64, check = False, kname = kname)
 
-    try:
-
-        # single write
-        if len(content) <= chunk_size:
-            prox.nodes(node).qemu(vmid).agent('file-write').post(file = remote_path, content = content)
-
-        # write chunks as part files then join
-        else:
-            chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
-            for count, chunk in enumerate(chunks):
-                prox.nodes(node).qemu(vmid).agent('file-write').post(file = f'{remote_path}.kopsrox{count:03}', content = chunk)
-            qa_exec(vmid, f'cat {remote_path}.kopsrox* > {remote_path} && rm -f {remote_path}.kopsrox*')
-
-    except Exception:
+    ok = False
+    if cp.returncode == 0:
+        try:
+            ok = int(json.loads(cp.stdout).get('exitcode', 1)) == 0
+        except Exception:
+            ok = False
+    if not ok:
         kabort(kname, f'unable to write {remote_path} to {vmnames[vmid]}')
-
-    # set permissions
-    qa_exec(vmid, f'chmod {mode} {remote_path}')
 
 # reboot a node via the agent and wait for it to return
 def node_reboot_wait(vmid: int) -> None:
@@ -297,22 +286,19 @@ def prox_destroy(vmid: int) -> None:
 
     kname = 'proxmox_destroy'
 
-    # get node and vmname
+    # get vmname
     vmname = vmnames[vmid]
-    node = vms[vmid]
 
-    # if destroying image
+    # if destroying image ( never running )
     if vmid == cluster_id:
-        prox_task(prox.nodes(node).qemu(cluster_id).delete(), node)
+        pve_run(['qm', 'destroy', str(cluster_id)], kname = kname)
         return
 
-    # power off and delete
+    # power off ( qm is synchronous; ignore a stop error for an already-stopped
+    # vm ) then delete
     with kstep(kname, f'destroying {vmname}'):
-        try:
-            prox_task(prox.nodes(node).qemu(vmid).status.stop.post(), node)
-            prox_task(prox.nodes(node).qemu(vmid).delete(), node)
-        except Exception as e:
-            kabort(kname, f'unable to destroy {node}/{vmid}\n{e}')
+        pve_run(['qm', 'stop', str(vmid)], check = False, kname = kname)
+        pve_run(['qm', 'destroy', str(vmid)], kname = kname)
 
 # clone
 def clone(vmid: int) -> None:
@@ -329,82 +315,31 @@ def clone(vmid: int) -> None:
     # hostname
     hostname = vmnames[vmid]
 
-    # clone
+    # clone ( qm is synchronous - each call returns when the task is done )
     with kstep('proxmox_clone', f'building {hostname}'):
-        prox_task(prox.nodes(proxmox_node).qemu(cluster_id).clone.post(newid = vmid))
+        pve_run(['qm', 'clone', str(cluster_id), str(vmid)], kname = 'proxmox_clone')
 
         # configure
-        prox_task(prox.nodes(proxmox_node).qemu(vmid).config.post(
-            name = hostname,
-            onboot = 1,
-            cores = vm_cpu,
-            memory = memory,
-            balloon = '0',
-            net0 = (f'model=virtio,bridge={network_bridge}'),
-            description = (f'{vmid}:{hostname}:{ip}')
-        ))
+        pve_run(['qm', 'set', str(vmid),
+                 '--name', hostname,
+                 '--onboot', '1',
+                 '--cores', str(vm_cpu),
+                 '--memory', str(memory),
+                 '--balloon', '0',
+                 '--net0', f'model=virtio,bridge={network_bridge}',
+                 '--description', f'{vmid}:{hostname}:{ip}'], kname = 'proxmox_clone')
 
-        # resize disk
-        prox_task(prox.nodes(proxmox_node).qemu(vmid).resize.put(
-            disk = 'scsi0',
-            size = f'{vm_disk}G',
-        ))
+        # resize disk ( absolute size )
+        pve_run(['qm', 'resize', str(vmid), 'scsi0', f'{vm_disk}G'], kname = 'proxmox_clone')
 
         # power on
-        prox_task(prox.nodes(proxmox_node).qemu(vmid).status.start.post())
+        pve_run(['qm', 'start', str(vmid)], kname = 'proxmox_clone')
 
     # configure the node via the guest agent
     node_prepare(vmid)
 
     # one plan unit - clone + prepare
     kplan_tick()
-
-# proxmox task blocker
-def prox_task(task_id: str, node: str = proxmox_node, timeout: int = 600) -> None:
-
-    # define kname
-    kname = 'proxmox_task'
-
-    # task type out of the upid for the live line
-    try:
-        task_type = task_id.split(':')[5]
-    except Exception:
-        task_type = str(task_id)
-
-    # poll until task stopped
-    with kstep(kname, f'{task_type} on {node}', quiet = True):
-        waited = float(0)
-        while True:
-            try:
-                status = prox.nodes(node).tasks(task_id).status.get()
-            except Exception as e:
-                kabort(kname, f'unable to get task {task_id} node: {node}\n{e}')
-            if status['status'] == 'stopped':
-                break
-            time.sleep(0.5)
-            waited += 0.5
-            if waited >= timeout:
-                kabort(kname, f'{task_type} timed out after {timeout}s on {node}')
-
-    # if task not completed ok
-    if not status['exitstatus'] == 'OK':
-        kabort(kname, (f'task exited with non OK status ({status["exitstatus"]})\n' + task_log(task_id, node)))
-
-# returns the task log
-def task_log(task_id: str, node: str = proxmox_node) -> str:
-
-    # define empty log line
-    logline = ''
-
-    # append each log line - a log fetch failure must not mask the task error
-    try:
-        for log in prox.nodes(node).tasks(task_id).log.get():
-            logline += log['t'] + '\n'
-    except Exception:
-        kmsg('proxmox_task-log', f'failed to get log for task {task_id}', 'sys')
-
-    # return string
-    return logline
 
 # internet checker
 def internet_check(vmid: int) -> None:

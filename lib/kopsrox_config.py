@@ -2,56 +2,69 @@
 
 # external imports
 import base64
+import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
 from configparser import ConfigParser
 from datetime import datetime
+from urllib.parse import unquote
 
 import requests
-import urllib3
-from proxmoxer import ProxmoxAPI
 
 from kopsrox_kmsg import kmsg, kabort, kstep, kplan, kplan_tick
 from kopsrox_schema import validate
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# run a local proxmox cli command ( qm / pvesm / pvesh ) via sudo - kopsrox runs
+# on the proxmox node itself so everything goes through these tools, not the http
+# api. args is an argv list ( not a shell string ) so payloads with quotes and
+# newlines need no escaping. returns the CompletedProcess; with check=True a
+# non-zero exit kaborts. NB qm guest exec is an exception to check=True: it exits
+# 0 at the qm level even when the in-guest command fails, so qa_exec parses the
+# json exit code itself and calls this with check=False
+def pve_run(args: list[str], input: str | None = None, timeout: int | None = None,
+            check: bool = True, kname: str = 'proxmox_cli') -> subprocess.CompletedProcess:
+    try:
+        cp = subprocess.run(['sudo'] + args, text = True, capture_output = True, input = input, timeout = timeout)
+    except Exception as e:
+        kabort(kname, f'failed to run: {" ".join(args)}\n{e}')
+    if check and cp.returncode != 0:
+        kabort(kname, f'command failed: {" ".join(args)}\n{(cp.stderr or cp.stdout).strip()}')
+    return cp
 
 
 # look up kopsrox_img name
 def kopsrox_img() -> str | bool:
 
-    # list contents
-    for image in prox.nodes(proxmox_node).storage(proxmox_storage).content.get():
-
-        # map image_name
-        image_name = image.get("volid")
-
-        # if 123-disk-0 found in volid
-        if re.search(f'{cluster_id}-disk-0', image_name):
-            return image_name
+    # find the template disk volid ( eg local-lvm:base-500-disk-0 ) via pvesm
+    for line in pve_run(['pvesm', 'list', proxmox_storage]).stdout.splitlines():
+        parts = line.split()
+        if parts and re.search(f'{cluster_id}-disk-0', parts[0]):
+            return parts[0]
 
     # unable to find image name
     return False
 
-# return dict of kopsrox vms by node
+# return dict of kopsrox vms by node ( always the local node )
 def list_kopsrox_vm() -> dict[int, str]:
 
     # init dict
     vmids = {}
 
-    # get all vms running on proxmox
-    for vm in prox.cluster.resources.get(type = 'vm'):
-
-        # map id
-        vmid = int(vm.get('vmid'))
+    # get all vms on this node ( qm list: VMID NAME STATUS ... )
+    for line in pve_run(['qm', 'list']).stdout.splitlines():
+        parts = line.split()
+        if not parts or not parts[0].isdigit():
+            continue
+        vmid = int(parts[0])
 
         # if vmid is in kopsrox config range ie between cluster_id and cluster_id + 10
-        # add vmid and node to dict
         if (vmid >= cluster_id) and (vmid < (cluster_id + 10)):
-            vmids[vmid] = vm.get('node')
+            vmids[vmid] = proxmox_node
 
     # return sorted dict
     return dict(sorted(vmids.items()))
@@ -131,49 +144,36 @@ def init(verb: str, cmd: str) -> None:
         for i, suffix in enumerate(g['suffixes'])
     }
 
-    # test connection to proxmox
-    try:
-        g['prox'] = ProxmoxAPI(
-            g['proxmox_endpoint'],
-            port=g['proxmox_api_port'],
-            user=g['proxmox_user'],
-            token_name=g['proxmox_token_name'],
-            token_value=g['proxmox_token_value'],
-            verify_ssl=False,
-            timeout=5)
+    # kopsrox runs on the proxmox node itself and drives it via qm / pvesm /
+    # pvesh ( no http api ) - the node name is simply this host's hostname
+    g['proxmox_node'] = socket.gethostname().split('.')[0]
+    proxmox_node = g['proxmox_node']
 
-        # check connection to cluster
-        prox = g['prox']
-        prox.cluster.status.get()
+    # confirm this really is a proxmox node we can drive
+    if not os.path.isdir(f'/etc/pve/nodes/{proxmox_node}'):
+        kabort(g['kname'], f'this host ({proxmox_node}) does not look like a proxmox node - '
+               'kopsrox must run on the pve node itself ( qm / pvesm / pvesh )')
 
-    except Exception as e:
-        kabort(g['kname'], f'API connection to proxmox failed check proxmox settings\n{e}')
+    # storage - must exist and be listed by pvesm on this node
+    storage_names = [line.split()[0] for line in pve_run(['pvesm', 'status'], kname = g['kname']).stdout.splitlines() if line.split()]
+    if g['proxmox_storage'] not in storage_names:
+        kabort(g['kname'], f'{g["proxmox_storage"]} storage not found on {proxmox_node}')
 
-    # discover cluster state - one call covers nodes, storage, vms and the image
-    try:
-        g['resources'] = prox.cluster.resources.get()
-    except Exception as e:
-        kabort(g['kname'], f'unable to list cluster resources\n{e}')
-
-    resources = g['resources']
-
-    # map node name
-    g['disc_nodes'] = [r.get('node') for r in resources if r.get('type') == 'node']
-    if g['proxmox_node'] not in g['disc_nodes']:
-        kabort(g['kname'], f'"{g["proxmox_node"]}" not found - discovered nodes: {g["disc_nodes"]}')
-
-    # storage
-    if not [r for r in resources if r.get('type') == 'storage' and r.get('node') == g['proxmox_node'] and r.get('storage') == g['proxmox_storage']]:
-        kabort(g['kname'], f'{g["proxmox_storage"]} storage not found')
-
-    # kopsrox vms in the cluster id range - full resource entries kept for status/name
+    # kopsrox vms in the cluster id range - qm list gives VMID NAME STATUS, kept
+    # for the image / power-on / ping checks below
     cluster_id = g['cluster_id']
-    g['disc_vms'] = {int(r['vmid']): r for r in resources
-                      if r.get('type') == 'qemu' and cluster_id <= int(r['vmid']) < cluster_id + 10}
-    disc_vms = g['disc_vms']
+    disc_vms = {}
+    for line in pve_run(['qm', 'list'], kname = g['kname']).stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or not parts[0].isdigit():
+            continue
+        vmid = int(parts[0])
+        if cluster_id <= vmid < cluster_id + 10:
+            disc_vms[vmid] = {'vmid': vmid, 'name': parts[1], 'status': parts[2]}
+    g['disc_vms'] = disc_vms
 
-    # map of kopsrox vmid -> proxmox node
-    g['vms'] = {vmid: disc_vms[vmid].get('node') for vmid in sorted(disc_vms)}
+    # map of kopsrox vmid -> proxmox node ( always this node )
+    g['vms'] = {vmid: proxmox_node for vmid in sorted(disc_vms)}
     vms = g['vms']
 
     # check the image exists - image create builds it so skips the check
@@ -182,11 +182,14 @@ def init(verb: str, cmd: str) -> None:
             kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
     # image description - template may not exist yet on image create
-    try:
-        template_data = prox.nodes(g['proxmox_node']).qemu(cluster_id).config.get()
-        g['cloud_image_desc'] = template_data['description']
-    except Exception:
-        g['cloud_image_desc'] = ''
+    # qm config prints the description url-encoded on one line, so decode it.
+    # template may not exist yet ( eg image create ) - then leave it empty
+    g['cloud_image_desc'] = ''
+    if cluster_id in vms:
+        cfg = pve_run(['qm', 'config', str(cluster_id)], check = False, kname = g['kname']).stdout
+        desc_match = re.search(r'^description: (.*)$', cfg, re.MULTILINE)
+        if desc_match:
+            g['cloud_image_desc'] = unquote(desc_match.group(1))
 
     # notify if the configured k3s_version differs from what's baked into the
     # image - image content only changes via image create, so editing the ini
@@ -203,18 +206,15 @@ def init(verb: str, cmd: str) -> None:
         for vmid in vms:
             if vmid != cluster_id and disc_vms[vmid].get('status') == 'stopped':
                 kmsg(g['kname'], f'powering on {disc_vms[vmid].get("name")}', 'sys')
-                prox.nodes(vms[vmid]).qemu(vmid).status.start.post()
+                pve_run(['qm', 'start', str(vmid)], kname = g['kname'])
 
     # master reachable? agent ping only - consumed by the image bridge gate and cluster plan totals
     # an agent-alive proxy for k3s-alive: cluster_plan_total can over-count one export unit, the bar clamps
     g['conf_check_master_up'] = False
     masterid = g['masterid']
     if verb in ['image', 'cluster'] and disc_vms.get(masterid, {}).get('status') == 'running':
-        try:
-            prox.nodes(vms[masterid]).qemu(masterid).agent.ping.post()
+        if pve_run(['qm', 'agent', str(masterid), 'ping'], check = False, kname = g['kname']).returncode == 0:
             g['conf_check_master_up'] = True
-        except Exception:
-            pass
 
     # image related config checks
     if verb == 'image':
@@ -243,7 +243,9 @@ def init(verb: str, cmd: str) -> None:
         network_bridge = g['network_bridge']
         if not g['conf_check_master_up']:
             if not re.search('sdn/', network_bridge):
-                discovered_bridges = [bridge.get('iface', None) for bridge in prox.nodes(g['proxmox_node']).network.get(type = 'bridge')]
+                bridges = json.loads(pve_run(['pvesh', 'get', f'/nodes/{proxmox_node}/network',
+                                              '--type', 'bridge', '--output-format', 'json'], kname = g['kname']).stdout)
+                discovered_bridges = [b.get('iface') for b in bridges]
             else:
                 # check we can map zone and get vnets
                 try:
@@ -254,7 +256,9 @@ def init(verb: str, cmd: str) -> None:
                     kabort(g['kname'], f'unable to parse sdn config: "{network_bridge}"')
 
                 # discover available sdn bridges
-                discovered_bridges = [bridge.get('vnet', None) for bridge in prox.nodes(g['proxmox_node']).sdn.zones(zone).content.get()]
+                content = json.loads(pve_run(['pvesh', 'get', f'/nodes/{proxmox_node}/sdn/zones/{zone}/content',
+                                              '--output-format', 'json'], kname = g['kname']).stdout)
+                discovered_bridges = [b.get('vnet') for b in content]
 
             # check configured bridge is in list
             if network_bridge not in discovered_bridges:

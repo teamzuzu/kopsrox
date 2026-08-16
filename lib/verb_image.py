@@ -24,14 +24,13 @@ from kopsrox_config import (
     network_dns,
     nfs_server,
     oci_image,
-    prox,
-    proxmox_node,
     proxmox_storage,
+    pve_run,
     vm_cpu,
     vm_ram,
 )
 from kopsrox_kmsg import kabort, kmsg, kplan, kplan_tick, kstep
-from kopsrox_proxmox import prox_destroy, prox_task, qa_exec, qa_write
+from kopsrox_proxmox import prox_destroy, qa_exec, qa_write
 
 
 # generate a patched copy of pve-microvm-template
@@ -192,7 +191,7 @@ fi''').stdout.strip()
     # redo them on each clone. only genuinely per-node state ( static ip,
     # hostname, machine-id, root fs resize ) still happens in node_prepare()
     with kstep(f'{kname}k3s', f'baking k3s {k3s_version} into the template') as step:
-        prox_task(prox.nodes(proxmox_node).qemu(cluster_id).status.start.post())
+        pve_run(['qm', 'start', str(cluster_id)])
         qa_write(cluster_id, '/root/k3s-install.sh', open(get_k3s_path).read(), '755')
         # both installer runs in one exec ( server unit shared by master/slave,
         # separate agent unit for workers ) plus the script cleanup - each
@@ -240,7 +239,7 @@ fi''').stdout.strip()
         # on elsewhere - see CLAUDE.md ) so the just-written files are flushed,
         # then convert to a proxmox template ourselves - patch_microvm_template()
         # deferred this so the vm could still be started for the steps above
-        prox_task(prox.nodes(proxmox_node).qemu(cluster_id).status.shutdown.post())
+        pve_run(['qm', 'shutdown', str(cluster_id)])
         local_exec(f'sudo qm template {cluster_id}')
     kplan_tick()
 
@@ -253,10 +252,7 @@ k3s_version: {k3s_version}
 created: {img_ts}'''
 
     # tag and describe the template
-    prox_task(prox.nodes(proxmox_node).qemu(cluster_id).config.post(
-        description=image_desc,
-        tags=f'{cluster_name},microvm',
-    ))
+    pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name},microvm'])
     kplan_tick()
 
 

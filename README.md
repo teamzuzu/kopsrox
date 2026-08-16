@@ -23,10 +23,12 @@ Get the latest release: https://github.com/simonccc/kopsrox/releases
 
 ## Installation
 
+kopsrox runs **on the Proxmox node itself** and drives it through the local `qm`, `pvesm` and `pvesh` commands (via `sudo`) — there is no HTTP API connection, so no endpoint, user or API token to configure. Run it as root, or as a user who can `sudo qm`.
+
 Install the Python dependencies:
 
 ```
-sudo apt install python3-proxmoxer python3-requests python3-urllib3 -y
+sudo apt install python3-requests -y
 ```
 
 Install pve-microvm — see the [pve-microvm installation docs](https://github.com/rcarmo/pve-microvm/blob/main/docs/installation.md):
@@ -37,7 +39,7 @@ sudo dpkg -i pve-microvm_*.deb
 sudo systemctl restart pvedaemon
 ```
 
-> **Important:** always restart `pvedaemon` after installing or upgrading pve-microvm. It keeps the previous version loaded in memory, and VMs started via the API will silently run the old code until it is restarted.
+> **Important:** always restart `pvedaemon` after installing or upgrading pve-microvm. It keeps the previous version loaded in memory. (kopsrox drives VMs through `qm`, which loads the current code on every invocation, so this mainly affects the Proxmox web UI and API — but restarting it is good practice.)
 
 Build the kopsrox microvm kernel. This is a one-time step — the stock pve-microvm kernel is missing features k3s requires, such as VXLAN and veth:
 
@@ -46,15 +48,6 @@ Build the kopsrox microvm kernel. This is a one-time step — the stock pve-micr
 ```
 
 This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`.
-
-Generate an API token:
-
-```
-sudo pvesh create /access/users/root@pam/token/kopsrox
-sudo pveum acl modify / --roles Administrator --user root@pam --token 'root@pam!kopsrox'
-```
-
-Keep the returned token value — it is needed in `kopsrox.ini`, described below.
 
 ## Configuration
 

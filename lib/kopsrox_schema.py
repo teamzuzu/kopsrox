@@ -68,12 +68,9 @@ def opt(name, comment, default, kind = str, blank_ok = False, commented = False,
 
 # every kopsrox.ini option in ini order - adding an option means adding one entry here
 SCHEMA = [
-    opt('proxmox_endpoint', 'domain or IP to access proxmox', '127.0.0.1'),
-    opt('proxmox_api_port', 'api port ( usually 8006 ) ', '8006', kind = int),
-    opt('proxmox_user', 'username to connect with / owner of the API token', 'root@pam'),
-    opt('proxmox_token_name', 'name of api token', 'kopsrox'),
-    opt('proxmox_token_value', 'text of api key', 'xxxxxxxxxxxxx'),
-    opt('proxmox_node', 'the proxmox node that you will run kopsrox on - the image and all nodes are created on this host', 'proxmox'),
+    # kopsrox runs on the proxmox node itself and drives it through the local
+    # qm / pvesm / pvesh cli ( no http api ), so no endpoint / token / node
+    # options are needed - the node is auto-detected from the hostname
     opt('proxmox_storage', 'the proxmox storage to use for kopsrox - needs to be available on the proxmox node', 'local-lvm'),
     opt('oci_image', 'the OCI image used to build the microvm template ( via pve-microvm-template )', 'ubuntu:26.04'),
     opt('microvm_kernel', 'kernel/initrd used to boot kopsrox microvms - built with dev/build-kopsrox-kernel.sh',
