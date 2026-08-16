@@ -181,7 +181,6 @@ fi''').stdout.strip()
         kmsg(f'{kname}check', 'unable to mount template disk to verify rootfs - continuing', 'sys')
 
     # boot template with the kopsrox kernel - args is root only so use qm not the api
-    kmsg(f'{kname}kernel', microvm_kernel)
     local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
 -initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
     kplan_tick()
