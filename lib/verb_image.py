@@ -8,9 +8,11 @@ import requests
 
 from kopsrox_artifacts import k3s_config, k3s_registries, kopsrox_manifest
 from kopsrox_config import (
+    IMAGE_CONFIG_OPTS,
     cloud_image_desc,
     cluster_id,
     cluster_name,
+    config_hash,
     extra_packages,
     image_info,
     k3s_version,
@@ -249,7 +251,8 @@ fi''').stdout.strip()
 cluster_name: {cluster_name}
 oci_image: {oci_image}
 k3s_version: {k3s_version}
-created: {img_ts}'''
+created: {img_ts}
+config_hash: {config_hash(IMAGE_CONFIG_OPTS)}'''
 
     # tag and describe the template
     pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name},microvm'])

@@ -2,6 +2,7 @@
 
 # external imports
 import base64
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,24 @@ def pve_run(args: list[str], input: str | None = None, timeout: int | None = Non
     if check and cp.returncode != 0:
         kabort(kname, f'command failed: {" ".join(args)}\n{(cp.stderr or cp.stdout).strip()}')
     return cp
+
+
+# config-drift detection: the ini options that only take effect via a rebuild.
+# IMAGE_CONFIG_OPTS are baked into the image ( change -> image create ); the k3s
+# version is deliberately excluded, it keeps its own more specific notice.
+# CLUSTER_CONFIG_OPTS are applied to the running cluster at join / reconcile
+# ( change -> cluster update ). a hash of each group is recorded at image create
+# / cluster create-update ( in the i0 / m1 vm descriptions ) and compared here on
+# later runs - see init(). secrets ( passwords, keys, s3 creds ) only ever appear
+# hashed, never in plain text in a description
+IMAGE_CONFIG_OPTS = ('oci_image', 'localuser', 'localpass', 'localsshkey', 'network_dns', 'extra_packages', 'nfs_server', 'nfs_path')
+CLUSTER_CONFIG_OPTS = ('s3_endpoint', 'region', 'access_key', 'access_secret', 'bucket', 'masters', 'workers', 'kubelet_args')
+
+# short stable hash of the given option globals ( order-fixed, name-tagged )
+def config_hash(names) -> str:
+    g = globals()
+    blob = '\n'.join(f'{n}={g.get(n, "")}' for n in names)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
 # look up kopsrox_img name
@@ -179,12 +198,13 @@ def init(verb: str, cmd: str) -> None:
         'v=$(basename "$f" .conf); p=/var/run/qemu-server/$v.pid; '
         'if [ -f "$p" ] && kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null; then s=running; else s=stopped; fi; '
         'echo "$v $s"; done; '
-        f'echo "##TEMPLATECONF"; cat /etc/pve/qemu-server/{cluster_id}.conf 2>/dev/null'],
+        f'echo "##TEMPLATECONF"; cat /etc/pve/qemu-server/{cluster_id}.conf 2>/dev/null; '
+        f'echo "##MASTERCONF"; cat /etc/pve/qemu-server/{cluster_id + 1}.conf 2>/dev/null'],
         kname = g['kname']).stdout
 
     storage_block = disc.split('##STORAGE', 1)[-1].split('##VMS', 1)[0]
     vms_block = disc.split('##VMS', 1)[-1].split('##TEMPLATECONF', 1)[0]
-    g['template_conf'] = disc.split('##TEMPLATECONF', 1)[-1]
+    g['template_conf'], _, master_conf = disc.split('##TEMPLATECONF', 1)[-1].partition('##MASTERCONF')
 
     # storage must be defined ( catches a typo'd proxmox_storage; an inactive
     # storage surfaces later with a clear error on first use )
@@ -225,6 +245,16 @@ def init(verb: str, cmd: str) -> None:
     if disk_match:
         g['cloud_image_disk'] = disk_match.group(1)
 
+    # config-drift baselines: the image group hash lives in the i0 description
+    # ( above ), the cluster group hash in the m1 description ( parsed the same
+    # way ). empty when absent - eg an image/cluster built before this existed,
+    # in which case the drift notices below stay silent ( no false positives )
+    master_desc = '\n'.join(unquote(line[1:]) for line in master_conf.splitlines() if line.startswith('#'))
+    image_hash_match = re.search(r'config_hash: (\S+)', g['cloud_image_desc'])
+    cluster_hash_match = re.search(r'config_hash: (\S+)', master_desc)
+    g['image_config_hash_baked'] = image_hash_match.group(1) if image_hash_match else ''
+    g['cluster_config_hash_baked'] = cluster_hash_match.group(1) if cluster_hash_match else ''
+
     # notify if the configured k3s_version differs from what's baked into the
     # image - image content only changes via image create, so editing the ini
     # alone does not affect a running cluster or new clones until then. skip the
@@ -234,6 +264,19 @@ def init(verb: str, cmd: str) -> None:
         kmsg(g['kname'], f'kopsrox.ini k3s_version ({g["k3s_version"]}) differs from the image '
              f'({image_k3s_match.group(1)}) - run "image create" to rebuild, then "k3s upgrade" '
              f'to apply it to the running cluster', 'sys')
+
+    # config-drift notices for the rest ( see IMAGE_CONFIG_OPTS / CLUSTER_CONFIG_OPTS ).
+    # only fire when a baseline was recorded ( else silent for old images/clusters )
+    # and not during the command that resolves the drift
+    if g['image_config_hash_baked'] and not (verb == 'image' and cmd == 'create') \
+            and g['image_config_hash_baked'] != config_hash(IMAGE_CONFIG_OPTS):
+        kmsg(g['kname'], 'kopsrox.ini image settings ( oci_image, localuser/pass/sshkey, network_dns, '
+             'extra_packages, nfs_* ) changed since the image was built - run "image create" to apply', 'sys')
+
+    if g['cluster_config_hash_baked'] and not (verb == 'cluster' and cmd in ('create', 'update', 'restore')) \
+            and g['cluster_config_hash_baked'] != config_hash(CLUSTER_CONFIG_OPTS):
+        kmsg(g['kname'], 'kopsrox.ini cluster settings ( s3_*, masters, workers, kubelet_args ) changed '
+             'since the cluster was built - run "cluster update" to apply', 'sys')
 
     # guest verbs power on any stopped node
     if verb in ['cluster', 'k3s', 'etcd', 'node']:

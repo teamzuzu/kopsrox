@@ -9,9 +9,11 @@ import requests
 
 from kopsrox_artifacts import k3s_config, kopsrox_manifest
 from kopsrox_config import (
+    CLUSTER_CONFIG_OPTS,
     cluster_id,
     cluster_name,
     conf_check_master_up,
+    config_hash,
     get_k3s_token,
     k3s_version,
     list_kopsrox_vm,
@@ -19,6 +21,7 @@ from kopsrox_config import (
     masters,
     network_ip,
     network_mask,
+    pve_run,
     vmip,
     vmnames,
     workers,
@@ -350,6 +353,12 @@ def k3s_update_cluster() -> None:
         if vm > workerid:
             kmsg('k3s_extra-worker', vmnames[vm])
             k3s_remove_node(vm)
+
+    # record the cluster-config baseline ( s3_*, masters, workers, kubelet_args )
+    # in the m1 description, so a later run can flag drift - see kopsrox_config.init.
+    # the m1 description is otherwise unused ( written by clone(), read by nothing )
+    pve_run(['qm', 'set', str(masterid), '--description',
+             f'{masterid}:{vmnames[masterid]}:{vmip(masterid)}\nconfig_hash: {config_hash(CLUSTER_CONFIG_OPTS)}'])
 
     # display cluster info
     cluster_info()
