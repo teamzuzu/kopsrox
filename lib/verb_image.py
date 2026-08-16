@@ -195,36 +195,47 @@ fi''').stdout.strip()
     with kstep(f'{kname}k3s', f'baking k3s {k3s_version} into the template') as step:
         prox_task(prox.nodes(proxmox_node).qemu(cluster_id).status.start.post())
         qa_write(cluster_id, '/root/k3s-install.sh', open(get_k3s_path).read(), '755')
+        # both installer runs in one exec ( server unit shared by master/slave,
+        # separate agent unit for workers ) plus the script cleanup - each
+        # qa_exec is a fixed ~0.5-1s round trip, so batch what has no dependency.
+        # each run redirects to its own log so nothing leaks to stderr ( which
+        # qa_exec would treat as a failure )
         install_env = f'INSTALL_K3S_VERSION={k3s_version} INSTALL_K3S_SKIP_START=true INSTALL_K3S_SKIP_ENABLE=true'
-        qa_exec(cluster_id, f'{install_env} /root/k3s-install.sh server > /k3s_install_server.log 2>&1')
-        qa_exec(cluster_id, f'{install_env} /root/k3s-install.sh agent > /k3s_install_agent.log 2>&1')
-        qa_exec(cluster_id, 'rm -f /root/k3s-install.sh')
+        qa_exec(cluster_id, f'{install_env} /root/k3s-install.sh server > /k3s_install_server.log 2>&1; '
+                            f'{install_env} /root/k3s-install.sh agent > /k3s_install_agent.log 2>&1; '
+                            'rm -f /root/k3s-install.sh')
         baked_check = qa_exec(cluster_id, 'test -x /usr/local/bin/k3s '
                                '&& test -f /etc/systemd/system/k3s.service '
                                '&& test -f /etc/systemd/system/k3s-agent.service '
                                '&& echo ok || echo missing')
         if baked_check != 'ok':
             kabort(f'{kname}k3s', 'k3s binary or systemd units missing after install - check /k3s_install_*.log on the template')
-        qa_exec(cluster_id, 'rm -f /k3s_install_server.log /k3s_install_agent.log')
 
         step.msg = 'baking cluster-wide config into the template'
-        qa_exec(cluster_id, f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; echo {localuser}:{localpass} | chpasswd')
-        qa_exec(cluster_id, f'mkdir -p /home/{localuser}/.ssh /etc/sudoers.d')
+        # one exec for all the account setup + directory creation ( plus the k3s
+        # install-log cleanup from above ) - none of it depends on the files the
+        # qa_writes below push, so batch it into a single round trip. the dirs
+        # have to exist first: the agent file-write api does not create parents -
+        # /home/<user>/.ssh + /etc/sudoers.d for the local user, /etc/rancher/k3s
+        # for config.yaml ( written per node at join ) / registries.yaml, and the
+        # server manifests dir for the kube-vip/traefik manifest
+        qa_exec(cluster_id,
+                f'rm -f /k3s_install_server.log /k3s_install_agent.log; '
+                f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; '
+                f'echo {localuser}:{localpass} | chpasswd; '
+                f'mkdir -p /home/{localuser}/.ssh /etc/sudoers.d /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests')
         qa_write(cluster_id, f'/home/{localuser}/.ssh/authorized_keys', f'{localsshkey}\n', '600')
-        qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
         qa_write(cluster_id, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
         qa_write(cluster_id, '/etc/resolv.conf', f'nameserver {network_dns}\n')
         # extra_packages / vim-tiny / unzip / nfs-common are installed in the one
         # chroot apt transaction during the template build ( see patch_microvm_template )
-        # /etc/rancher/k3s holds each node's config.yaml, written at join time -
-        # bake the dir in so k3s_join() only has to push the file ( the agent
-        # file-write api does not create parent dirs )
-        qa_exec(cluster_id, 'mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests')
         qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
         # embedded-registry: true in config.yaml starts the Spegel P2P mesh, but
         # k3s only mirrors registries listed under mirrors: here - bake the
         # wildcard registries.yaml in so every node ( server + agent ) has it
         qa_write(cluster_id, '/etc/rancher/k3s/registries.yaml', k3s_registries())
+        # the writes above run as root - fix ownership of the ssh dir it created
+        qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
 
         # graceful agent-driven shutdown ( pve-microvm >= 0.3.19, already relied
         # on elsewhere - see CLAUDE.md ) so the just-written files are flushed,
