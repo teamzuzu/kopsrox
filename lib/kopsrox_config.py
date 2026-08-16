@@ -40,7 +40,12 @@ def pve_run(args: list[str], input: str | None = None, timeout: int | None = Non
 # look up kopsrox_img name
 def kopsrox_img() -> str | bool:
 
-    # find the template disk volid ( eg local-lvm:base-500-disk-0 ) via pvesm
+    # init already captured the template disk volid from qm config - reuse it
+    # rather than paying another ~1.4s pvesm spawn
+    if globals().get('cloud_image_disk'):
+        return cloud_image_disk
+
+    # fall back to pvesm list ( eg image not discovered during init )
     for line in pve_run(['pvesm', 'list', proxmox_storage]).stdout.splitlines():
         parts = line.split()
         if parts and re.search(f'{cluster_id}-disk-0', parts[0]):
@@ -154,22 +159,30 @@ def init(verb: str, cmd: str) -> None:
         kabort(g['kname'], f'this host ({proxmox_node}) does not look like a proxmox node - '
                'kopsrox must run on the pve node itself ( qm / pvesm / pvesh )')
 
-    # storage - must exist and be listed by pvesm on this node
-    storage_names = [line.split()[0] for line in pve_run(['pvesm', 'status'], kname = g['kname']).stdout.splitlines() if line.split()]
-    if g['proxmox_storage'] not in storage_names:
+    # discover storage / vms / status in ONE call - the cli equivalent of the old
+    # api cluster.resources. this is deliberately a single pvesh spawn rather than
+    # a pvesm status + qm list pair: every qm / pvesm / pvesh invocation pays
+    # ~1.4s of pve-perl startup, so each extra call is a full second-plus on the
+    # clock. only qm config ( the image description ) is still fetched separately
+    try:
+        resources = json.loads(pve_run(['pvesh', 'get', '/cluster/resources', '--output-format', 'json'], kname = g['kname']).stdout)
+    except Exception as e:
+        kabort(g['kname'], f'unable to list cluster resources\n{e}')
+
+    # storage - must exist and be on this node
+    if not [r for r in resources if r.get('type') == 'storage' and r.get('node') == proxmox_node and r.get('storage') == g['proxmox_storage']]:
         kabort(g['kname'], f'{g["proxmox_storage"]} storage not found on {proxmox_node}')
 
-    # kopsrox vms in the cluster id range - qm list gives VMID NAME STATUS, kept
-    # for the image / power-on / ping checks below
+    # kopsrox vms on this node in the cluster id range - status kept for the
+    # image / power-on / ping checks below
     cluster_id = g['cluster_id']
     disc_vms = {}
-    for line in pve_run(['qm', 'list'], kname = g['kname']).stdout.splitlines():
-        parts = line.split()
-        if len(parts) < 3 or not parts[0].isdigit():
+    for r in resources:
+        if r.get('type') != 'qemu' or r.get('node') != proxmox_node:
             continue
-        vmid = int(parts[0])
+        vmid = int(r['vmid'])
         if cluster_id <= vmid < cluster_id + 10:
-            disc_vms[vmid] = {'vmid': vmid, 'name': parts[1], 'status': parts[2]}
+            disc_vms[vmid] = {'vmid': vmid, 'name': r.get('name', str(vmid)), 'status': r.get('status')}
     g['disc_vms'] = disc_vms
 
     # map of kopsrox vmid -> proxmox node ( always this node )
@@ -182,14 +195,20 @@ def init(verb: str, cmd: str) -> None:
             kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
     # image description - template may not exist yet on image create
-    # qm config prints the description url-encoded on one line, so decode it.
-    # template may not exist yet ( eg image create ) - then leave it empty
+    # qm config prints the description url-encoded on one line, so decode it. the
+    # same output carries the template disk volid ( eg scsi0: local-lvm:base-500-
+    # disk-0,... ), so capture it here for kopsrox_img() rather than paying a
+    # separate pvesm list spawn. template may not exist yet ( eg image create )
     g['cloud_image_desc'] = ''
+    g['cloud_image_disk'] = ''
     if cluster_id in vms:
         cfg = pve_run(['qm', 'config', str(cluster_id)], check = False, kname = g['kname']).stdout
         desc_match = re.search(r'^description: (.*)$', cfg, re.MULTILINE)
         if desc_match:
             g['cloud_image_desc'] = unquote(desc_match.group(1))
+        disk_match = re.search(rf'(\S+:\S*{cluster_id}-disk-0)', cfg)
+        if disk_match:
+            g['cloud_image_disk'] = disk_match.group(1)
 
     # notify if the configured k3s_version differs from what's baked into the
     # image - image content only changes via image create, so editing the ini
@@ -210,14 +229,20 @@ def init(verb: str, cmd: str) -> None:
 
     # master reachable? agent ping only - consumed by the image bridge gate and cluster plan totals
     # an agent-alive proxy for k3s-alive: cluster_plan_total can over-count one export unit, the bar clamps
+    # the ping is itself a ~1.4s qm spawn, so only run it where the result is used:
+    # the cluster verb ( plan totals ) and image create ( the bridge-check gate ) -
+    # image info / destroy never consult it
     g['conf_check_master_up'] = False
     masterid = g['masterid']
-    if verb in ['image', 'cluster'] and disc_vms.get(masterid, {}).get('status') == 'running':
+    if (verb == 'cluster' or (verb == 'image' and cmd == 'create')) and disc_vms.get(masterid, {}).get('status') == 'running':
         if pve_run(['qm', 'agent', str(masterid), 'ping'], check = False, kname = g['kname']).returncode == 0:
             g['conf_check_master_up'] = True
 
-    # image related config checks
-    if verb == 'image':
+    # image related config checks - build prerequisites only, so gated to
+    # image create ( pointless latency on image info / destroy: the pve-microvm
+    # version gate, the upstream-release notice, and the ~1.4s pvesh bridge/sdn
+    # discovery all matter only when actually building the template )
+    if verb == 'image' and cmd == 'create':
 
         # pve-microvm version checks
         # kopsrox needs 0.3.19+ ( qm shutdown fix and the template layout we patch )

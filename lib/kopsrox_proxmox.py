@@ -49,28 +49,33 @@ def qa_exec(vmid: int = masterid, cmd: str = 'uptime', node: str = proxmox_node,
     # short command for the live line
     short_cmd = safe_cmd if len(safe_cmd) <= 60 else safe_cmd[:57] + '...'
 
-    with kstep(kname, f'{vmname} waiting for agent', quiet = True) as step:
+    # qm guest exec is synchronous ( waits up to --timeout ) and returns the guest
+    # result as json - out-data / err-data / exitcode / exited. argv list so cmd
+    # ( heredocs, quotes, newlines ) needs no escaping. check=False: a non-zero qm
+    # exit is the agent call itself failing ( eg agent not up yet ), handled below;
+    # the in-guest exit code is inside the json
+    exec_argv = ['qm', 'guest', 'exec', str(vmid), '--timeout', str(timeout), '--', 'bash', '-c', cmd]
 
-        # wait for the agent - can be slow on first boot
-        for _ in range(120):
-            if pve_run(['qm', 'agent', str(vmid), 'ping'], check = False, kname = kname).returncode == 0:
-                break
-            time.sleep(1)
-        else:
-            return fail(f'agent not responding on {vmname} cmd: {safe_cmd}')
+    with kstep(kname, f'{vmname} {short_cmd}', quiet = True) as step:
 
-        # agent is up - show the command while it runs
-        step.msg = f'{vmname} {short_cmd}'
-
-        # qm guest exec is synchronous ( waits up to --timeout ) and returns the
-        # guest result as json - out-data / err-data / exitcode / exited. argv
-        # list so cmd ( heredocs, quotes, newlines ) needs no escaping. check=False:
-        # a non-zero qm exit is the agent call itself failing, handled below - the
-        # in-guest exit code is inside the json
-        cp = pve_run(['qm', 'guest', 'exec', str(vmid), '--timeout', str(timeout), '--', 'bash', '-c', cmd],
-                     check = False, kname = kname)
+        # try the exec straight away - on an already-up agent ( the common case )
+        # this is a single qm spawn, no separate ping first. only if it fails do
+        # we assume the agent is not up yet ( eg first boot after a clone ), wait
+        # for qm agent ping, then retry once
+        cp = pve_run(exec_argv, check = False, kname = kname)
         if cp.returncode != 0:
-            return fail(f'agent exec failed on {vmname}: {safe_cmd}\n{cp.stderr.strip()}')
+            step.msg = f'{vmname} waiting for agent'
+            for _ in range(120):
+                if pve_run(['qm', 'agent', str(vmid), 'ping'], check = False, kname = kname).returncode == 0:
+                    break
+                time.sleep(1)
+            else:
+                return fail(f'agent not responding on {vmname} cmd: {safe_cmd}')
+            step.msg = f'{vmname} {short_cmd}'
+            cp = pve_run(exec_argv, check = False, kname = kname)
+            if cp.returncode != 0:
+                return fail(f'agent exec failed on {vmname}: {safe_cmd}\n{cp.stderr.strip()}')
+
         try:
             result = json.loads(cp.stdout)
         except Exception:
