@@ -170,6 +170,18 @@ reclaimPolicy: Delete
 parameters:
   archiveOnDelete: "true"'''
 
+# k3s registries file ( /etc/rancher/k3s/registries.yaml ) - static and
+# identical on every node, so baked into the image ( see verb_image.py ) rather
+# than pushed per join. config.yaml's embedded-registry: true only starts the
+# Spegel P2P mesh; k3s does not actually mirror a registry until it is listed
+# under mirrors: here. a bare "*" wildcard ( no endpoints ) enables mirroring
+# for every registry via the embedded mirror without overriding any upstream.
+# this file must be present on servers AND agents - the mirror enablement is
+# distributed cluster-wide but the mirror config is not, so bake it everywhere
+def k3s_registries() -> str:
+    return 'mirrors:\n  "*":\n'
+
+
 # k3s config file ( /etc/rancher/k3s/config.yaml ) - role-aware since the
 # systemd units baked into the image at build time carry no node-specific
 # flags ( see verb_image.py ); every join-time flag k3s would otherwise take

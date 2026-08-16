@@ -6,7 +6,7 @@ from datetime import datetime
 
 import requests
 
-from kopsrox_artifacts import k3s_config, kopsrox_manifest
+from kopsrox_artifacts import k3s_config, k3s_registries, kopsrox_manifest
 from kopsrox_config import (
     cloud_image_desc,
     cluster_id,
@@ -121,6 +121,7 @@ def image_create() -> None:
     # ( kopsrox_k3s.k3s_join ), this is just for local review
     open(f'./lib/manifests/kopsrox-{cluster_name}.yaml', 'w').write(kopsrox_manifest())
     open('./lib/manifests/config.yaml', 'w').write(k3s_config('master'))
+    open('./lib/manifests/registries.yaml', 'w').write(k3s_registries())
 
     # destroy template if it exists
     try:
@@ -215,6 +216,10 @@ fi''').stdout.strip()
         # file-write api does not create parent dirs )
         qa_exec(cluster_id, 'mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/server/manifests')
         qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
+        # embedded-registry: true in config.yaml starts the Spegel P2P mesh, but
+        # k3s only mirrors registries listed under mirrors: here - bake the
+        # wildcard registries.yaml in so every node ( server + agent ) has it
+        qa_write(cluster_id, '/etc/rancher/k3s/registries.yaml', k3s_registries())
 
         # graceful agent-driven shutdown ( pve-microvm >= 0.3.19, already relied
         # on elsewhere - see CLAUDE.md ) so the just-written files are flushed,
