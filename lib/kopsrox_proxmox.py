@@ -258,6 +258,14 @@ rm -f /etc/machine-id /var/lib/dbus/machine-id
 systemd-machine-id-setup
 ln -sf /etc/machine-id /var/lib/dbus/machine-id
 
+# journald already created /var/log/journal/<old-id>/ under the pre-regen
+# machine-id ( persistent since /var/log/journal exists ); journalctl only
+# reads /var/log/journal/<current-id>/, so it reports "No journal files were
+# found" until this is reset. the pre-clone journal is just image-build noise,
+# so purge it and let journald recreate the dir under the new machine-id
+rm -rf /var/log/journal/*
+systemctl restart systemd-journald
+
 # grow the root filesystem to the resized disk - partitionless ext4
 resize2fs /dev/vda 2>/dev/null
 
