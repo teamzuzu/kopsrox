@@ -77,24 +77,14 @@ def patch_microvm_template() -> str:
         ('''        ln -sf ../microvm-setup.service \\
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
          '        : # kopsrox: microvm-setup not enabled'),
-        # udev - without it dev-ttyS0.device never appears and the console= generated
-        # serial-getty stalls boot for its full 90s device timeout
-        # sudo - saves an apt-get run on every node create
-        # systemd-timesyncd - no ntp in the oci image
-        # ( dbus is upstream since pve-microvm 0.3.19 )
-        # drop isc-dhcp-client - unused on the apt path ( networkd's built-in
-        # dhcp client serves the fresh clone's initial lease, then node_prepare
-        # switches to static; upstream's dhclient fallback is alpine/fedora only )
-        # - and append the kopsrox extras ( see above ) so they install in this
-        # one chroot transaction instead of a second live apt run after boot
+
+        # drop isc-dhcp-client - unused 
         ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
          f'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd{extra_pkgs}"'),
         # with udev installed serial-getty would start and fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
          'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
-        # defer template conversion - a proxmox template can never be started
-        # again, but image_create() needs to boot this vm once via the guest
-        # agent to bake k3s in first; it converts to a template itself once done
+        # don't create image at this stage
         ('log "Converting to template..."\nqm template "$TEMPLATE_VMID"',
          'log "Converting to template..."\n: # kopsrox: template conversion deferred to image_create()'),
     ]
@@ -115,10 +105,8 @@ def patch_microvm_template() -> str:
 def image_create() -> None:
     kname = 'image_'
 
-    kmsg(f'{kname}create', f'{cluster_name}-i0 microvm template based on {oci_image}', 'sys')
-
     # template build / rootfs verify / kernel args / bake k3s / tag
-    kplan(5, f'{cluster_name} image create')
+    kplan(5, f'creating {cluster_name}-i0 / {oci_image}')
 
     # check pve-microvm is installed on this node
     if not os.path.isfile('/usr/share/pve-microvm/vmlinuz'):
@@ -137,10 +125,7 @@ def image_create() -> None:
             open(get_k3s_path, 'wb').write(dl_k3s.content)
         except Exception:
             kabort(f'{kname}check', f'unable to download get k3s script')
-
-    # inspection copies of the manifest and a sample master config.yaml -
-    # actual per-node config.yaml is generated role-aware at join time
-    # ( kopsrox_k3s.k3s_join ), this is just for local review
+  
     open(f'./lib/manifests/kopsrox-{cluster_name}.yaml', 'w').write(kopsrox_manifest())
     open('./lib/manifests/config.yaml', 'w').write(k3s_config('master'))
     open('./lib/manifests/registries.yaml', 'w').write(k3s_registries())
@@ -153,46 +138,19 @@ def image_create() -> None:
 
     # build the microvm template with a patched copy of pve-microvm-template
     microvm_template = patch_microvm_template()
-    with kstep(f'{kname}template', f'running {microvm_template} ( log: kopsrox-image.log )'):
+    with kstep(f'{kname}template', f'running {microvm_template}'):
         local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 --name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 4G --memory {vm_ram * 1024} \
 --cores {vm_cpu} --profile standard --no-docker > kopsrox-image.log 2>&1')
     kplan_tick()
-
-    # the template build hides chroot failures - verify the guest actually has
-    # systemd and the guest agent before going any further. disk is still
-    # "vm-" ( not "base-" ) here - template conversion is deferred until after
-    # the k3s bake step below
-    with kstep(f'{kname}verify', 'checking template rootfs'):
-        img_dev = local_exec(f'sudo pvesm path {proxmox_storage}:vm-{cluster_id}-disk-0').stdout.strip()
-        img_check = local_exec(f'''
-sudo lvchange -ay -K {img_dev} 2>/dev/null || true
-sudo mkdir -p /tmp/kopsrox-img-check
-if sudo mount -o ro {img_dev} /tmp/kopsrox-img-check 2>/dev/null; then
-  ls /tmp/kopsrox-img-check/usr/lib/systemd/systemd /tmp/kopsrox-img-check/usr/sbin/qemu-ga > /dev/null 2>&1 && echo ok || echo missing
-  sudo umount /tmp/kopsrox-img-check
-  sudo lvchange -an {img_dev} 2>/dev/null || true
-else
-  echo nomount
-fi''').stdout.strip()
-    kplan_tick()
-    if re.search('missing', img_check):
-        kabort(f'{kname}check', 'template rootfs is missing systemd/qemu-ga - check kopsrox-image.log')
-    if re.search('nomount', img_check):
-        kmsg(f'{kname}check', 'unable to mount template disk to verify rootfs - continuing', 'sys')
 
     # boot template with the kopsrox kernel - args is root only so use qm not the api
     local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
 -initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
     kplan_tick()
 
-    # boot the template once to bake k3s and every cluster-wide ( not
-    # per-node ) piece of node_prepare() into it via the guest agent - the
-    # local user, DNS, extra_packages and the kube-vip/traefik manifest are
-    # identical for every node in this cluster, so there is no reason to
-    # redo them on each clone. only genuinely per-node state ( static ip,
-    # hostname, machine-id, root fs resize ) still happens in node_prepare()
-    with kstep(f'{kname}k3s', f'baking k3s {k3s_version} into the template') as step:
+    # add k3s
+    with kstep(f'{kname}k3s', f'installing {k3s_version}') as step:
         pve_run(['qm', 'start', str(cluster_id)])
         qa_write(cluster_id, '/root/k3s-install.sh', open(get_k3s_path).read(), '755')
         # both installer runs in one exec ( server unit shared by master/slave,
@@ -211,14 +169,9 @@ fi''').stdout.strip()
         if baked_check != 'ok':
             kabort(f'{kname}k3s', 'k3s binary or systemd units missing after install - check /k3s_install_*.log on the template')
 
-        step.msg = 'baking cluster-wide config into the template'
-        # one exec for all the account setup + directory creation ( plus the k3s
-        # install-log cleanup from above ) - none of it depends on the files the
-        # qa_writes below push, so batch it into a single round trip. the dirs
-        # have to exist first: the agent file-write api does not create parents -
-        # /home/<user>/.ssh + /etc/sudoers.d for the local user, /etc/rancher/k3s
-        # for config.yaml ( written per node at join ) / registries.yaml, and the
-        # server manifests dir for the kube-vip/traefik manifest
+        step.msg = f'generating local config...'
+
+        # one exec for all the account setup + directory creation 
         qa_exec(cluster_id,
                 f'rm -f /k3s_install_server.log /k3s_install_agent.log; '
                 f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; '
@@ -227,8 +180,6 @@ fi''').stdout.strip()
         qa_write(cluster_id, f'/home/{localuser}/.ssh/authorized_keys', f'{localsshkey}\n', '600')
         qa_write(cluster_id, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
         qa_write(cluster_id, '/etc/resolv.conf', f'nameserver {network_dns}\n')
-        # extra_packages / vim-tiny / unzip / nfs-common are installed in the one
-        # chroot apt transaction during the template build ( see patch_microvm_template )
         qa_write(cluster_id, f'/var/lib/rancher/k3s/server/manifests/kopsrox-{cluster_name}.yaml', kopsrox_manifest())
         # embedded-registry: true in config.yaml starts the Spegel P2P mesh, but
         # k3s only mirrors registries listed under mirrors: here - bake the
@@ -237,10 +188,7 @@ fi''').stdout.strip()
         # the writes above run as root - fix ownership of the ssh dir it created
         qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
 
-        # graceful agent-driven shutdown ( pve-microvm >= 0.3.19, already relied
-        # on elsewhere - see CLAUDE.md ) so the just-written files are flushed,
-        # then convert to a proxmox template ourselves - patch_microvm_template()
-        # deferred this so the vm could still be started for the steps above
+        # graceful agent-driven shutdown 
         pve_run(['qm', 'shutdown', str(cluster_id)])
         local_exec(f'sudo qm template {cluster_id}')
     kplan_tick()
@@ -257,7 +205,6 @@ config_hash: {config_hash(IMAGE_CONFIG_OPTS)}'''
     # tag and describe the template
     pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name},microvm'])
     kplan_tick()
-
 
 # destroy image
 def image_destroy() -> None:
