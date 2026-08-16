@@ -54,18 +54,20 @@ def kopsrox_img() -> str | bool:
     # unable to find image name
     return False
 
-# return dict of kopsrox vms by node ( always the local node )
+# return dict of kopsrox vms by node ( always the local node ) - a fresh read
+# ( state changes mid cluster op ), straight from the local qemu-server conf dir
+# so it is a cheap sudo spawn, not a ~1.4s qm list
 def list_kopsrox_vm() -> dict[int, str]:
 
     # init dict
     vmids = {}
 
-    # get all vms on this node ( qm list: VMID NAME STATUS ... )
-    for line in pve_run(['qm', 'list']).stdout.splitlines():
-        parts = line.split()
-        if not parts or not parts[0].isdigit():
+    # each /etc/pve/qemu-server/<vmid>.conf is a vm on this node
+    for line in pve_run(['bash', '-c', 'ls /etc/pve/qemu-server/*.conf 2>/dev/null']).stdout.splitlines():
+        base = line.rsplit('/', 1)[-1]
+        if not (base.endswith('.conf') and base[:-5].isdigit()):
             continue
-        vmid = int(parts[0])
+        vmid = int(base[:-5])
 
         # if vmid is in kopsrox config range ie between cluster_id and cluster_id + 10
         if (vmid >= cluster_id) and (vmid < (cluster_id + 10)):
@@ -159,30 +161,46 @@ def init(verb: str, cmd: str) -> None:
         kabort(g['kname'], f'this host ({proxmox_node}) does not look like a proxmox node - '
                'kopsrox must run on the pve node itself ( qm / pvesm / pvesh )')
 
-    # discover storage / vms / status in ONE call - the cli equivalent of the old
-    # api cluster.resources. this is deliberately a single pvesh spawn rather than
-    # a pvesm status + qm list pair: every qm / pvesm / pvesh invocation pays
-    # ~1.4s of pve-perl startup, so each extra call is a full second-plus on the
-    # clock. only qm config ( the image description ) is still fetched separately
-    try:
-        resources = json.loads(pve_run(['pvesh', 'get', '/cluster/resources', '--output-format', 'json'], kname = g['kname']).stdout)
-    except Exception as e:
-        kabort(g['kname'], f'unable to list cluster resources\n{e}')
-
-    # storage - must exist and be on this node
-    if not [r for r in resources if r.get('type') == 'storage' and r.get('node') == proxmox_node and r.get('storage') == g['proxmox_storage']]:
-        kabort(g['kname'], f'{g["proxmox_storage"]} storage not found on {proxmox_node}')
-
-    # kopsrox vms on this node in the cluster id range - status kept for the
-    # image / power-on / ping checks below
     cluster_id = g['cluster_id']
+
+    # discover storage + vms + status + the template config straight from the
+    # pmxcfs / runtime files in ONE cheap sudo spawn ( ~0.02s ) instead of a
+    # pvesh / qm call ( each ~1.4s of pve-perl startup ):
+    #  - storage:      defined in /etc/pve/storage.cfg
+    #  - vms on this node: /etc/pve/qemu-server/<vmid>.conf ( that dir is a symlink
+    #    to the local node's, so it is exactly our guests )
+    #  - running/stopped: the live pidfile /var/run/qemu-server/<vmid>.pid + a
+    #    kill -0 liveness check ( the same signal qm status keys on )
+    #  - the template's own .conf ( image description + disk volid ) tacked on
+    disc = pve_run(['bash', '-c',
+        'echo "##STORAGE"; cat /etc/pve/storage.cfg 2>/dev/null; '
+        'echo "##VMS"; '
+        'for f in /etc/pve/qemu-server/*.conf; do [ -e "$f" ] || continue; '
+        'v=$(basename "$f" .conf); p=/var/run/qemu-server/$v.pid; '
+        'if [ -f "$p" ] && kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null; then s=running; else s=stopped; fi; '
+        'echo "$v $s"; done; '
+        f'echo "##TEMPLATECONF"; cat /etc/pve/qemu-server/{cluster_id}.conf 2>/dev/null'],
+        kname = g['kname']).stdout
+
+    storage_block = disc.split('##STORAGE', 1)[-1].split('##VMS', 1)[0]
+    vms_block = disc.split('##VMS', 1)[-1].split('##TEMPLATECONF', 1)[0]
+    g['template_conf'] = disc.split('##TEMPLATECONF', 1)[-1]
+
+    # storage must be defined ( catches a typo'd proxmox_storage; an inactive
+    # storage surfaces later with a clear error on first use )
+    storage_names = re.findall(r'^\w+:\s+(\S+)', storage_block, re.MULTILINE)
+    if g['proxmox_storage'] not in storage_names:
+        kabort(g['kname'], f'{g["proxmox_storage"]} storage not found in /etc/pve/storage.cfg on {proxmox_node}')
+
+    # kopsrox vms on this node in the cluster id range, with status
     disc_vms = {}
-    for r in resources:
-        if r.get('type') != 'qemu' or r.get('node') != proxmox_node:
+    for line in vms_block.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[0].isdigit():
             continue
-        vmid = int(r['vmid'])
+        vmid = int(parts[0])
         if cluster_id <= vmid < cluster_id + 10:
-            disc_vms[vmid] = {'vmid': vmid, 'name': r.get('name', str(vmid)), 'status': r.get('status')}
+            disc_vms[vmid] = {'vmid': vmid, 'name': g['vmnames'].get(vmid, str(vmid)), 'status': parts[1]}
     g['disc_vms'] = disc_vms
 
     # map of kopsrox vmid -> proxmox node ( always this node )
@@ -195,20 +213,17 @@ def init(verb: str, cmd: str) -> None:
             kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
     # image description - template may not exist yet on image create
-    # qm config prints the description url-encoded on one line, so decode it. the
-    # same output carries the template disk volid ( eg scsi0: local-lvm:base-500-
-    # disk-0,... ), so capture it here for kopsrox_img() rather than paying a
-    # separate pvesm list spawn. template may not exist yet ( eg image create )
-    g['cloud_image_desc'] = ''
+    # the template .conf ( read above, no extra spawn ) holds the description as
+    # url-encoded '#' comment lines at the top ( how pve persists it - one line
+    # per description line ), plus the disk volid ( eg scsi0: local-lvm:base-500-
+    # disk-0,... ) which is cached for kopsrox_img(). empty when no template yet
+    cfg = g['template_conf']
+    desc_lines = [unquote(line[1:]) for line in cfg.splitlines() if line.startswith('#')]
+    g['cloud_image_desc'] = '\n'.join(desc_lines)
     g['cloud_image_disk'] = ''
-    if cluster_id in vms:
-        cfg = pve_run(['qm', 'config', str(cluster_id)], check = False, kname = g['kname']).stdout
-        desc_match = re.search(r'^description: (.*)$', cfg, re.MULTILINE)
-        if desc_match:
-            g['cloud_image_desc'] = unquote(desc_match.group(1))
-        disk_match = re.search(rf'(\S+:\S*{cluster_id}-disk-0)', cfg)
-        if disk_match:
-            g['cloud_image_disk'] = disk_match.group(1)
+    disk_match = re.search(rf'(\S+:\S*{cluster_id}-disk-0)', cfg)
+    if disk_match:
+        g['cloud_image_disk'] = disk_match.group(1)
 
     # notify if the configured k3s_version differs from what's baked into the
     # image - image content only changes via image create, so editing the ini
