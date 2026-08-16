@@ -42,6 +42,25 @@ from kopsrox_proxmox import prox_destroy, prox_task, qa_exec, qa_write
 def patch_microvm_template() -> str:
     kname = 'image_'
 
+    # extra packages folded into the single chroot install below rather than a
+    # second live apt run after boot - one apt transaction, no post-boot network
+    # dependency for packages:
+    # - vim-tiny: a usable editor for debugging a node over the console/ssh
+    # - unzip: lets 'cluster restore' handle a legacy compressed ( .zip ) etcd
+    #   snapshot ( k3s <=1.34 doubles the path decompressing one itself, so
+    #   kopsrox_k3s restore unzips it and restores the plain file )
+    # - nfs-common ( when nfs_server is set ): the 'nfs' storageclass mounts via
+    #   kubelet on the host, which needs the /sbin/mount.nfs helper - that binary
+    #   ships in nfs-common itself, so --no-install-recommends still provides it
+    #   ( only rpcbind, an nfsv3-only recommend, is skipped; nfsv4 is unaffected )
+    packages = [p for p in extra_packages.replace(',', ' ').split() if p]
+    for pkg in ('vim-tiny', 'unzip'):
+        if pkg not in packages:
+            packages.append(pkg)
+    if nfs_server != '' and 'nfs-common' not in packages:
+        packages.append('nfs-common')
+    extra_pkgs = (' ' + ' '.join(packages)) if packages else ''
+
     # patches as ( old, new ) - each must match or upstream changed and we bail
     patches = [
         # always write dns for the chroot - the guard misses empty files -
@@ -65,8 +84,10 @@ def patch_microvm_template() -> str:
         # drop isc-dhcp-client - unused on the apt path ( networkd's built-in
         # dhcp client serves the fresh clone's initial lease, then node_prepare
         # switches to static; upstream's dhclient fallback is alpine/fedora only )
+        # - and append the kopsrox extras ( see above ) so they install in this
+        # one chroot transaction instead of a second live apt run after boot
         ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
-         'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd"'),
+         f'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd{extra_pkgs}"'),
         # with udev installed serial-getty would start and fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
          'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
@@ -193,24 +214,8 @@ fi''').stdout.strip()
         qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
         qa_write(cluster_id, f'/etc/sudoers.d/{localuser}', f'{localuser} ALL=(ALL) NOPASSWD:ALL\n', '440')
         qa_write(cluster_id, '/etc/resolv.conf', f'nameserver {network_dns}\n')
-        # the nfs storageclass mounts via kubelet on the host, which needs the
-        # /sbin/mount.nfs helper from nfs-common - the built-in kernel nfs client
-        # is not enough. pull it in whenever nfs_server is set, regardless of
-        # what extra_packages says ( it may be blank or omit nfs-common )
-        packages = [p for p in extra_packages.replace(',', ' ').split() if p]
-        # always-on packages, regardless of extra_packages:
-        # - vim-tiny: a usable editor for debugging a node over the console/ssh
-        # - unzip: lets 'cluster restore' handle a legacy compressed ( .zip ) etcd
-        #   snapshot: k3s <=1.34 doubles the path decompressing one itself, so
-        #   kopsrox_k3s restore unzips it and restores the plain file ( new
-        #   snapshots are uncompressed - etcd-snapshot-compress is off )
-        for pkg in ('vim-tiny', 'unzip'):
-            if pkg not in packages:
-                packages.append(pkg)
-        if nfs_server != '' and 'nfs-common' not in packages:
-            packages.append('nfs-common')
-        if packages:
-            qa_exec(cluster_id, f'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq 2>/dev/null && apt-get install -y -qq {" ".join(packages)} 2>/dev/null')
+        # extra_packages / vim-tiny / unzip / nfs-common are installed in the one
+        # chroot apt transaction during the template build ( see patch_microvm_template )
         # /etc/rancher/k3s holds each node's config.yaml, written at join time -
         # bake the dir in so k3s_join() only has to push the file ( the agent
         # file-write api does not create parent dirs )
