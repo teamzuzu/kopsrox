@@ -199,7 +199,13 @@ def init(verb: str, cmd: str) -> None:
         'if [ -f "$p" ] && kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null; then s=running; else s=stopped; fi; '
         'echo "$v $s"; done; '
         f'echo "##TEMPLATECONF"; cat /etc/pve/qemu-server/{cluster_id}.conf 2>/dev/null; '
-        f'echo "##MASTERCONF"; cat /etc/pve/qemu-server/{cluster_id + 1}.conf 2>/dev/null'],
+        f'echo "##MASTERCONF"; cat /etc/pve/qemu-server/{cluster_id + 1}.conf 2>/dev/null; '
+        # this is pure data-gathering: the template conf ( no image yet ) and the
+        # master conf ( no cluster yet ) are both legitimately absent, and a failed
+        # cat on a missing optional file would otherwise make the whole script exit
+        # non-zero and kabort under pve_run check=True. force a clean exit so the
+        # exit code never reflects which optional files happen to exist.
+        'exit 0'],
         kname = g['kname']).stdout
 
     storage_block = disc.split('##STORAGE', 1)[-1].split('##VMS', 1)[0]
