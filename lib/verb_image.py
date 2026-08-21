@@ -182,7 +182,7 @@ created: {img_ts}
 config_hash: {config_hash(IMAGE_CONFIG_OPTS)}'''
 
     # tag and describe the template
-    pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name}', '--cpu host'])
+    pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name}'])
     kplan_tick()
 
 # destroy image
