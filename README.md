@@ -10,8 +10,10 @@ kopsrox creates and manages highly available [k3s](https://k3s.io) clusters on [
 - etcd snapshots can be pushed to and restored from S3-compatible storage with a single command.
 - All node configuration happens through the QEMU guest agent — no cloud-init and no SSH required, and it works before the node has networking.
 - The kubeconfig and k3s join token are exported automatically after every cluster operation.
+- k3s's embedded registry mirror is enabled, so a container image pulled by one node can be served to the others.
+- kopsrox notices when `kopsrox.ini` has drifted from what is actually baked into the image or the running cluster, and tells you which command to run.
 
-Get the latest release: https://github.com/simonccc/kopsrox/releases
+Get the latest release: https://github.com/teamzuzu/kopsrox/releases
 
 ## Requirements
 
@@ -57,8 +59,10 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 | --- | --- |
 | `oci_image` | The OCI image nodes are built from. The default `ubuntu:26.04` is well-tested; other apt-based images should work but are untested. |
 | `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image create` to take effect. |
+| `network_bridge` | The Proxmox bridge nodes attach to. For a Proxmox SDN, give the zone and vnet as `sdn/<zone>/<vnet>`. The image template is built on this bridge too, so it must have internet access. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
 | `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image create`. |
+| `kubelet_args` | Optional. Comma-separated kubelet arguments applied to every node (for example `max-pods=250`). Takes effect on the next node join — no `image create` needed. |
 | `s3_*` | S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. |
 
 ### VM ID and IP layout
@@ -140,7 +144,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 ### image
 
-- **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch if a template already exists. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, and the kube-vip/traefik manifest - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
+- **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch if a template already exists. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, the kube-vip/traefik manifest, and the `registries.yaml` enabling the embedded registry mirror - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
 - **info** — prints the template description (source image, k3s version, creation time) and its storage volume.
 - **destroy** — deletes the image template.
 
@@ -207,7 +211,7 @@ Set `oci_image` in `kopsrox.ini`. Other apt-based images (for example, `debian:t
 
 **Can I migrate kopsrox VMs to other hosts in my Proxmox cluster?**
 
-This is mostly supported but largely untested — kopsrox builds everything on the single configured `proxmox_node`. Note that microvms do not support live migration.
+This is mostly supported but largely untested — kopsrox builds everything on the node it runs on (auto-detected from the hostname; there is no `proxmox_node` option). Note that microvms do not support live migration.
 
 **The guest agent times out, or nodes can't reach the internet.**
 
