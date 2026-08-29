@@ -23,6 +23,7 @@ from kopsrox_config import (
     localuser,
     microvm_initrd,
     microvm_kernel,
+    network_bridge,
     network_dns,
     nfs_server,
     oci_image,
@@ -36,8 +37,9 @@ from kopsrox_proxmox import prox_destroy, qa_exec, qa_write
 
 
 # generate a patched copy of pve-microvm-template
-# - the ubuntu oci image ships an empty /etc/resolv.conf so the chroot package
-#   install fails silently and the template ends up without systemd/qemu-ga
+# - the chroot needs the configured network_dns, not the host resolver upstream
+#   copies in ( pve-microvm >= 0.3.22 repairs an empty/dangling oci
+#   /etc/resolv.conf itself, but always with the host's dns or 1.1.1.1 )
 # - the first boot installer blocks multi-user.target ( and so the guest agent )
 #   waiting for a network kopsrox has not configured yet
 def patch_microvm_template() -> str:
@@ -63,16 +65,20 @@ def patch_microvm_template() -> str:
     extra_pkgs = (' ' + ' '.join(packages)) if packages else ''
 
     # patches as ( old, new ) - each must match or upstream changed and we bail
+    # 0.3.22 made two of these ours-no-longer: the chroot package install now
+    # runs fail-closed ( set -e in the chroot + die on a failed transaction )
+    # instead of swallowing apt's stderr into 2>/dev/null, which is exactly what
+    # the two apt patches here used to buy - so they are gone rather than
+    # rewritten, and a bad extra_packages now aborts the build loudly
     patches = [
-        # always write dns for the chroot - the guard misses empty files -
-        # and use the configured network_dns, not upstream's hardcoded 1.1.1.1
-        ('[ -f "$ROOTFS_DIR/etc/resolv.conf" ] || echo "nameserver 1.1.1.1"',
-         f'echo "nameserver {network_dns}"'),
-        # surface apt errors into the build log
-        ('apt-get update -qq 2>/dev/null',
-         'apt-get update -qq'),
-        ('apt-get install -y -qq --no-install-recommends $PKGS 2>/dev/null',
-         'apt-get install -y -qq --no-install-recommends $PKGS'),
+        # point the chroot at the configured network_dns - upstream's
+        # ensure_rootfs_resolver() repairs an empty/dangling oci resolv.conf but
+        # fills it with the host's resolver ( or 1.1.1.1 ), which is not
+        # necessarily reachable from the guest. rm -f first: the file upstream
+        # left may be a symlink and we must not write through it
+        ('ensure_rootfs_resolver "$ROOTFS_DIR"',
+         f'rm -f "$ROOTFS_DIR/etc/resolv.conf"\n'
+         f'echo "nameserver {network_dns}" > "$ROOTFS_DIR/etc/resolv.conf"'),
         # do not enable the first boot installer
         ('''        ln -sf ../microvm-setup.service \\
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
@@ -136,7 +142,8 @@ def image_create() -> None:
     with kstep(f'{kname}template', f'creating {cluster_name} template') as step:
         local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 --name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 4G --memory {vm_ram * 1024} \
---cores {vm_cpu} --refresh --profile standard --no-docker > kopsrox-image.log 2>&1')
+--cores {vm_cpu} --bridge {network_bridge} --refresh --profile standard --no-docker \
+> kopsrox-image.log 2>&1')
     kplan_tick()
 
     # boot template with the kopsrox kernel - args is root only so use qm not the api

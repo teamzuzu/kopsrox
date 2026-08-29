@@ -302,6 +302,19 @@ def init(verb: str, cmd: str) -> None:
         if pve_run(['qm', 'agent', str(masterid), 'ping'], check = False, kname = g['kname']).returncode == 0:
             g['conf_check_master_up'] = True
 
+    # normalise an sdn bridge ( "sdn/<zone>/<vnet>" ) down to the vnet name that
+    # every consumer actually wants - 'qm set --net0 bridge=' on a clone and
+    # '--bridge' on the image build. pure string work, no spawn, so it runs for
+    # every verb instead of only inside the image-create discovery check below,
+    # where it used to live - leaving cluster verbs to clone onto a bridge
+    # literally named "sdn/<zone>/<vnet>"
+    g['sdn_zone'] = ''
+    if re.search('sdn/', g['network_bridge']):
+        sdn_params = g['network_bridge'].split('/')
+        if len(sdn_params) != 3 or not sdn_params[1] or not sdn_params[2]:
+            kabort(g['kname'], f'unable to parse sdn config: "{g["network_bridge"]}"')
+        g['sdn_zone'], g['network_bridge'] = sdn_params[1], sdn_params[2]
+
     # image related config checks - build prerequisites only, so gated to
     # image create ( pointless latency on image info / destroy: the pve-microvm
     # version gate, the upstream-release notice, and the ~1.4s pvesh bridge/sdn
@@ -309,47 +322,43 @@ def init(verb: str, cmd: str) -> None:
     if verb == 'image' and cmd == 'create':
 
         # pve-microvm version checks
-        # kopsrox needs 0.3.19+ ( qm shutdown fix and the template layout we patch )
+        # kopsrox needs 0.3.22+ - it is the template layout patch_microvm_template()
+        # anchors on ( 0.3.22 replaced the inline resolv.conf guard with
+        # ensure_rootfs_resolver() and made the chroot package install
+        # fail-closed ), and upstream calls it the supported release for
+        # everything back to 0.3.17
         g['microvm_ver'] = subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"], text=True, capture_output=True).stdout.strip()
         microvm_ver = g['microvm_ver']
         if microvm_ver == 'none':
             kabort(g['kname'], 'pve-microvm is not installed - see README.md')
         microvm_installed = tuple(map(int, microvm_ver.split('-')[0].split('.')))
-        if microvm_installed < (0, 3, 19):
-            kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.19 or later')
+        if microvm_installed < (0, 3, 22):
+            kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.22 or later')
 
         # notify if upstream has a newer release - skip quietly if offline
-        # 0.3.20+ postinst restarts pvedaemon itself so only warn on older installs
+        # no pvedaemon hint: the 0.3.22 floor is well past 0.3.20, whose postinst
+        # restarts pvedaemon itself ( 0.3.22 also try-restarts it on configure )
         try:
             microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
             if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
-                pvedaemon_hint = ' - restart pvedaemon after upgrading!' if microvm_installed < (0, 3, 20) else ''
-                kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} ){pvedaemon_hint}', 'sys')
+                kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} )', 'sys')
         except Exception:
             pass
 
-        # check configured bridge exists or is a sdn vnet - skipped when the cluster is already live
+        # check the ( already normalised ) bridge exists or is a sdn vnet -
+        # skipped when the cluster is already live
         network_bridge = g['network_bridge']
         if not g['conf_check_master_up']:
-            if not re.search('sdn/', network_bridge):
+            if not g['sdn_zone']:
                 bridges = json.loads(pve_run(['pvesh', 'get', f'/nodes/{proxmox_node}/network',
                                               '--type', 'bridge', '--output-format', 'json'], kname = g['kname']).stdout)
                 discovered_bridges = [b.get('iface') for b in bridges]
             else:
-                # check we can map zone and get vnets
-                try:
-                    sdn_params = network_bridge.split('/')
-                    zone = sdn_params[1]
-                    network_bridge = sdn_params[2]
-                except Exception:
-                    kabort(g['kname'], f'unable to parse sdn config: "{network_bridge}"')
-
-                # discover available sdn bridges
-                content = json.loads(pve_run(['pvesh', 'get', f'/nodes/{proxmox_node}/sdn/zones/{zone}/content',
+                # discover available vnets in the configured sdn zone
+                content = json.loads(pve_run(['pvesh', 'get', f'/nodes/{proxmox_node}/sdn/zones/{g["sdn_zone"]}/content',
                                               '--output-format', 'json'], kname = g['kname']).stdout)
                 discovered_bridges = [b.get('vnet') for b in content]
 
             # check configured bridge is in list
             if network_bridge not in discovered_bridges:
                 kabort(g['kname'], f'"{network_bridge}" not found. valid bridges: {discovered_bridges}')
-            g['network_bridge'] = network_bridge

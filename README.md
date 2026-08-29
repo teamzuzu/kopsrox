@@ -16,7 +16,7 @@ Get the latest release: https://github.com/simonccc/kopsrox/releases
 ## Requirements
 
 - A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node.
-- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.19 or later, installed on the node.
+- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.22 or later, installed on the node.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
@@ -195,7 +195,7 @@ Neither works on microvm. The guest has no DMI/SMBIOS, so the cloud controller's
 
 **`qm shutdown` / `qm reboot` don't work from the Proxmox UI.**
 
-They do, as of pve-microvm v0.3.19 (a fix kopsrox contributed upstream). Remember to `systemctl restart pvedaemon` after any pve-microvm install or upgrade, or VMs started via the API will keep running the old code.
+They do, as of pve-microvm v0.3.19 (a fix kopsrox contributed upstream). On v0.3.20+ the package restarts pvedaemon itself (v0.3.22 also `try-restart`s it when qemu-server triggers fire); on anything older, `systemctl restart pvedaemon` after an install or upgrade, or VMs started via the API keep running the old code.
 
 **Be careful with `qm stop`.**
 
