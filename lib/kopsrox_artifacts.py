@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-# cluster artifact generators - shared by verb_image ( writes local inspection
-# copies ) and kopsrox_k3s.k3s_join ( pushes config-fresh copies into nodes at
-# join time via the guest agent )
+# cluster artifact generators - local inspection copies, and the real files
+# pushed into nodes at join time
 from kopsrox_config import (
     access_key,
     access_secret,
@@ -18,13 +17,10 @@ from kopsrox_config import (
 )
 
 
-# k3s manifest - kubevip + traefik + cloud controller + csi
 def kopsrox_manifest() -> str:
 
-    # generate kubevip manifest
     manifest = open('./lib/manifests/kubevip.yaml', 'r').read().replace('KOPSROX_IP', network_ip).strip()
 
-    # generate traefik helm config
     manifest += f'''
 ---
 apiVersion: helm.cattle.io/v1
@@ -39,22 +35,12 @@ spec:
         loadBalancerIP: "{network_ip}"'''
 
 
-    # optional external-nfs backed 'nfs' storageclass ( opt-in via nfs_server )
-    # - nfs-subdir-external-provisioner: one deployment + storageclass, a
-    #   subdirectory per pv under a single export. needs no disk hotplug so the
-    #   microvm csi limitation above does not apply. the kopsrox kernel bakes in
-    #   the nfs client ( CONFIG_NFS_FS/V4 ) and nfs-common is a default package
-    # - not annotated is-default-class, so local-path stays the cluster default;
-    #   pods opt in with storageClassName: nfs
-    # - archiveOnDelete true renames the backing dir to archived-* on pvc delete
-    #   rather than purging it, so data survives an accidental delete
+    # optional nfs storageclass - not the default, so pods opt in explicitly
     if nfs_server != '':
         manifest += kopsrox_nfs_manifest()
 
     return manifest
 
-# nfs-subdir-external-provisioner artifacts - appended to the cluster manifest
-# only when nfs_server is configured ( see kopsrox_manifest above )
 def kopsrox_nfs_manifest() -> str:
     return f'''
 ---
@@ -170,47 +156,28 @@ reclaimPolicy: Delete
 parameters:
   archiveOnDelete: "true"'''
 
-# k3s registries file ( /etc/rancher/k3s/registries.yaml ) - static and
-# identical on every node, so baked into the image ( see verb_image.py ) rather
-# than pushed per join. config.yaml's embedded-registry: true only starts the
-# Spegel P2P mesh; k3s does not actually mirror a registry until it is listed
-# under mirrors: here. a bare "*" wildcard ( no endpoints ) enables mirroring
-# for every registry via the embedded mirror without overriding any upstream.
-# this file must be present on servers AND agents - the mirror enablement is
-# distributed cluster-wide but the mirror config is not, so bake it everywhere
+# registries.yaml. embedded-registry: true only starts the Spegel mesh - nothing
+# mirrors until listed under mirrors: here. needed on servers AND agents, so it
+# is baked into the image rather than pushed per join
 def k3s_registries() -> str:
     return 'mirrors:\n  "*":\n'
 
 
-# k3s config file ( /etc/rancher/k3s/config.yaml ) - role-aware since the
-# systemd units baked into the image at build time carry no node-specific
-# flags ( see verb_image.py ); every join-time flag k3s would otherwise take
-# on the command line is supplied here instead, per k3s's own equivalence
-# between config.yaml keys and CLI flags
+# config.yaml - the baked-in units carry no flags, so every flag lives here
 def k3s_config(nodetype: str, token: str = '') -> str:
-    # optional kubelet args from the ini ( kubelet_args, comma separated ) -
-    # rendered as a kubelet-arg: yaml list, or omitted entirely when blank.
-    # there is deliberately no provider-id here: it only mattered to the proxmox
-    # ccm/csi ( both dropped - see CLAUDE.md ), and k3s defaults providerID to
-    # k3s://<nodename> which is fine with no cloud provider
+    # omitted entirely when blank. no provider-id - the dropped ccm/csi is gone
     kubelet_block = ''
     args = [a.strip() for a in kubelet_args.split(',') if a.strip()]
     if args:
         kubelet_block = '\nkubelet-arg:\n' + '\n'.join(f'  - "{a}"' for a in args)
 
-    # worker ( agent role ) - no etcd, no cloud-controller-manager, no tls-san
     if nodetype == 'worker':
         return f'''\
 server: https://{network_ip}:6443
 token: {token}{kubelet_block}'''
 
-    # master bootstraps its own cluster - slave joins an existing one. if a
-    # token is passed for master ( eg a saved token from a prior cluster of
-    # the same name ) pin cluster-init to it, so recreating a cluster is
-    # deterministic rather than minting a new token every time. callers that
-    # need a genuinely fresh identity ( k3s_join()'s restore bootstrap, ahead
-    # of --cluster-reset-restore-path ) pass an empty token instead - pinning
-    # a stale token there conflicts with the fresh CA cluster-reset generates
+    # pinning cluster-init to a saved token makes recreating a cluster
+    # deterministic; the restore bootstrap passes '' for a fresh CA
     if nodetype == 'master':
         join_config = 'cluster-init: true'
         if token:
@@ -242,4 +209,4 @@ etcd-s3-access-key: {access_key}
 etcd-s3-secret-key: {access_secret}
 etcd-s3-bucket: {bucket}
 etcd-s3-skip-ssl-verify: true
-etcd-snapshot-compress: false{region_config}'''  # compressed .zip snapshots hit a k3s <=1.34 restore path-doubling bug ( see kopsrox_k3s restore )
+etcd-snapshot-compress: false{region_config}'''  # compressed snapshots hit a k3s <=1.34 restore path-doubling bug

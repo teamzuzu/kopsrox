@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-# kopsrox output module - the only module that emits ansi
-# kmsg() severity lines, kabort() error + exit 1, kstep() live spinner steps,
-# kplan()/kplan_tick() overall progress bar for compound verbs
-# degrades to plain sequential lines when stdout is not a tty ( NO_COLOR kills color )
+# the only module that emits ansi. degrades to plain sequential lines when
+# stdout is not a tty ( NO_COLOR kills color )
 
 import sys
 import os
@@ -12,7 +10,6 @@ import threading
 import atexit
 import shutil
 
-# ansi bits
 RESET = '\x1b[0m'
 BOLD = '\x1b[1m'
 COLOR = {
@@ -23,7 +20,6 @@ COLOR = {
     'blue':   '\x1b[34m',
 }
 
-# severity -> glyph, color, bold
 SEV = {
     'info': ('·', 'cyan',   False),
     'sys':  ('!', 'yellow', True),
@@ -35,16 +31,14 @@ SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 KNAME_PAD = 22
 BAR_WIDTH = 12
 
-# animation needs a tty - color additionally honours NO_COLOR
 TTY = sys.stdout.isatty()
 COLOR_ON = TTY and not os.environ.get('NO_COLOR')
 
-# shared state - guarded by LOCK
 LOCK = threading.RLock()
 STEPS = []      # stack of live ksteps - innermost last
-PLAN = None     # {'title': str, 'total': int, 'done': int}
-LIVE = 0        # lines the live region currently occupies
-THREAD = None   # render thread
+PLAN = None
+LIVE = 0
+THREAD = None
 
 def paint(text: str, color: str, bold: bool = False) -> str:
     if not COLOR_ON:
@@ -61,7 +55,6 @@ def fmt_secs(secs: float) -> str:
         return f'{secs:.1f}s'
     return f'{int(secs // 60)}m{int(secs % 60):02d}s'
 
-# render one message - pad computed on plain text before color is added
 def fmt_line(sev: str, kname: str, msg: str) -> str:
     glyph, color, bold = SEV[sev]
     name = fmt_kname(kname)
@@ -73,8 +66,7 @@ def fmt_line(sev: str, kname: str, msg: str) -> str:
         out += '\n  ' + line
     return out
 
-# clip a painted line to width visible chars - ansi sequences pass through
-# live lines must never wrap or clear_live cannot count the rows to clear
+# a live line must never wrap or clear_live cannot count the rows to clear
 def clip(line: str, width: int) -> str:
     out = ''
     vis = 0
@@ -92,14 +84,12 @@ def clip(line: str, width: int) -> str:
         i += 1
     return out
 
-# wipe the live region - cursor ends at column 0 of its first line
 def clear_live() -> None:
     global LIVE
     if LIVE:
         sys.stdout.write('\r' + (f'\x1b[{LIVE - 1}A' if LIVE > 1 else '') + '\x1b[0J')
         LIVE = 0
 
-# draw the live region - plan bar line then innermost step spinner line
 def draw_live() -> None:
     global LIVE
     lines = []
@@ -117,13 +107,12 @@ def draw_live() -> None:
         lines.append(f"{paint(frame, 'cyan', True)} {paint(name, 'cyan')}{pad}{step.msg} {elapsed}")
     if lines:
         width = shutil.get_terminal_size().columns
-        # explicit \r\n - sudo use_pty flips the shared tty to raw mode while image
-        # builds run and a bare \n stops implying carriage return ( no ONLCR )
+        # explicit \r\n - sudo use_pty flips the tty to raw during image builds,
+        # where a bare \n no longer implies a carriage return
         sys.stdout.write('\r\n'.join(clip(line, width - 1) for line in lines))
         LIVE = len(lines)
     sys.stdout.flush()
 
-# print a permanent line without tearing the live region
 def emit(text: str) -> None:
     with LOCK:
         if TTY:
@@ -134,7 +123,6 @@ def emit(text: str) -> None:
             sys.stdout.write(text + '\n')
         sys.stdout.flush()
 
-# render thread - animates spinner + elapsed while anything is live
 def render_loop():
     while True:
         time.sleep(0.1)
@@ -150,7 +138,6 @@ def ensure_thread():
         THREAD = threading.Thread(target = render_loop, daemon = True)
         THREAD.start()
 
-# wipe live output and restore the cursor on exit
 @atexit.register
 def cleanup():
     with LOCK:
@@ -161,11 +148,9 @@ def cleanup():
                 sys.stdout.write('\x1b[?25h')
             sys.stdout.flush()
 
-# kmsg - severity message line - same signature as always
 def kmsg(kname: str = 'kopsrox', msg: str = 'no msg', sev: str = 'info') -> None:
     emit(fmt_line(sev, kname, msg))
 
-# kabort - error message then exit non zero
 def kabort(kname: str, msg: str) -> None:
     with LOCK:
         # live steps are dead - stop the render thread redrawing them
@@ -173,7 +158,6 @@ def kabort(kname: str, msg: str) -> None:
         kmsg(kname, msg, 'err')
     exit(1)
 
-# kplan - start or extend the overall step plan
 def kplan(add: int, title: str | None = None) -> None:
     global PLAN
     with LOCK:
@@ -183,14 +167,12 @@ def kplan(add: int, title: str | None = None) -> None:
             PLAN['title'] = title
         PLAN['total'] += add
 
-# kplan_tick - one plan unit done
 def kplan_tick() -> None:
     with LOCK:
         if PLAN:
             PLAN['done'] += 1
 
-# kstep - live spinner line while a slow operation runs
-# quiet steps never print on success - for polling internals like qa_exec
+# live spinner while a slow operation runs. quiet steps never print on success
 class kstep:
 
     def __init__(self, kname: str, msg: str, quiet: bool = False) -> None:
@@ -202,7 +184,6 @@ class kstep:
     def __enter__(self):
         with LOCK:
             STEPS.append(self)
-            # non tty gets a plain start line instead of the spinner
             if not TTY and not self.quiet:
                 sys.stdout.write(fmt_line('info', self.kname, self.msg) + '\n')
                 sys.stdout.flush()

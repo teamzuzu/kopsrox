@@ -36,26 +36,12 @@ from kopsrox_kmsg import kabort, kmsg, kplan, kplan_tick, kstep
 from kopsrox_proxmox import prox_destroy, qa_exec, qa_write
 
 
-# generate a patched copy of pve-microvm-template
-# - the chroot needs the configured network_dns, not the host resolver upstream
-#   copies in ( pve-microvm >= 0.3.22 repairs an empty/dangling oci
-#   /etc/resolv.conf itself, but always with the host's dns or 1.1.1.1 )
-# - the first boot installer blocks multi-user.target ( and so the guest agent )
-#   waiting for a network kopsrox has not configured yet
+# patched copy of pve-microvm-template - the chroot needs the configured dns,
+# and upstream's first boot installer blocks the guest agent on a missing network
 def patch_microvm_template() -> str:
     kname = 'image_'
 
-    # extra packages folded into the single chroot install below rather than a
-    # second live apt run after boot - one apt transaction, no post-boot network
-    # dependency for packages:
-    # - vim-tiny: a usable editor for debugging a node over the console/ssh
-    # - unzip: lets 'cluster restore' handle a legacy compressed ( .zip ) etcd
-    #   snapshot ( k3s <=1.34 doubles the path decompressing one itself, so
-    #   kopsrox_k3s restore unzips it and restores the plain file )
-    # - nfs-common ( when nfs_server is set ): the 'nfs' storageclass mounts via
-    #   kubelet on the host, which needs the /sbin/mount.nfs helper - that binary
-    #   ships in nfs-common itself, so --no-install-recommends still provides it
-    #   ( only rpcbind, an nfsv3-only recommend, is skipped; nfsv4 is unaffected )
+    # folded into the one chroot install, so no post-boot network dependency
     packages = [p for p in extra_packages.replace(',', ' ').split() if p]
     for pkg in ('vim-tiny', 'unzip'):
         if pkg not in packages:
@@ -64,33 +50,22 @@ def patch_microvm_template() -> str:
         packages.append('nfs-common')
     extra_pkgs = (' ' + ' '.join(packages)) if packages else ''
 
-    # patches as ( old, new ) - each must match or upstream changed and we bail
-    # 0.3.22 made two of these ours-no-longer: the chroot package install now
-    # runs fail-closed ( set -e in the chroot + die on a failed transaction )
-    # instead of swallowing apt's stderr into 2>/dev/null, which is exactly what
-    # the two apt patches here used to buy - so they are gone rather than
-    # rewritten, and a bad extra_packages now aborts the build loudly
+    # ( old, new ) - each must match or upstream changed and we bail
     patches = [
-        # point the chroot at the configured network_dns - upstream's
-        # ensure_rootfs_resolver() repairs an empty/dangling oci resolv.conf but
-        # fills it with the host's resolver ( or 1.1.1.1 ), which is not
-        # necessarily reachable from the guest. rm -f first: the file upstream
-        # left may be a symlink and we must not write through it
+        # upstream uses the host's dns, which the guest may not reach. rm -f
+        # first - what it left may be a symlink
         ('ensure_rootfs_resolver "$ROOTFS_DIR"',
          f'rm -f "$ROOTFS_DIR/etc/resolv.conf"\n'
          f'echo "nameserver {network_dns}" > "$ROOTFS_DIR/etc/resolv.conf"'),
-        # do not enable the first boot installer
         ('''        ln -sf ../microvm-setup.service \\
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
          '        : # kopsrox: microvm-setup not enabled'),
 
-        # drop isc-dhcp-client - unused 
         ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
          f'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd{extra_pkgs}"'),
-        # with udev installed serial-getty would start and fight microvm-console for ttyS0
+        # with udev installed it would fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
          'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
-        # don't create image at this stage
         ('log "Converting to template..."\nqm template "$TEMPLATE_VMID"',
          'log "Converting to template..."\n: # kopsrox: template conversion deferred to image_create()'),
     ]
@@ -107,22 +82,17 @@ def patch_microvm_template() -> str:
     return patched_path
 
 
-# create image ( rebuilds from scratch if one already exists )
 def image_create() -> None:
     kname = 'image_'
 
-    # template build / rootfs verify / kernel args / bake k3s / tag
     kplan(7, f'creating {cluster_name}-i0 / {oci_image}')
 
-    # check pve-microvm is installed on this node
     if not os.path.isfile('/usr/share/pve-microvm/vmlinuz'):
         kabort(f'{kname}check', 'pve-microvm not installed - see https://github.com/rcarmo/pve-microvm')
 
-    # check the kopsrox kernel has been built
     if not (os.path.isfile(microvm_kernel) and os.path.isfile(microvm_initrd)):
         kabort(f'{kname}check', f'{microvm_kernel} not found - run dev/build-kopsrox-kernel.sh')
 
-    # download k3s.sh
     get_k3s_path = './lib/scripts/k3s.sh'
     if not os.path.isfile(get_k3s_path):
         kmsg(f'{kname}get-k3s', f'downloading script from https://get.k3s.io...')
@@ -137,7 +107,6 @@ def image_create() -> None:
     open('./lib/manifests/registries.yaml', 'w').write(k3s_registries())
 
 
-    # build the microvm template with a patched copy of pve-microvm-template
     microvm_template = patch_microvm_template()
     with kstep(f'{kname}template', f'creating {cluster_name} template') as step:
         local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
@@ -146,12 +115,10 @@ def image_create() -> None:
 > kopsrox-image.log 2>&1')
     kplan_tick()
 
-    # boot template with the kopsrox kernel - args is root only so use qm not the api
     local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
 -initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
     kplan_tick()
 
-    # add k3s
     with kstep(f'{kname}k3s', f'installing {k3s_version}') as step:
         pve_run(['qm', 'start', str(cluster_id)])
         qa_write(cluster_id, '/root/k3s-install.sh', open(get_k3s_path).read(), '755')
@@ -162,7 +129,6 @@ def image_create() -> None:
                             f'{install_env} /root/k3s-install.sh agent > /k3s_install_agent.log 2>&1; '
                             'rm -f /root/k3s-install.sh')
 
-        # one exec for all the account setup + directory creation 
         qa_exec(cluster_id,
                 f'useradd -m -s /bin/bash -G sudo {localuser} 2>/dev/null; '
                 f'echo {localuser}:{localpass} | chpasswd; '
@@ -174,12 +140,10 @@ def image_create() -> None:
         qa_write(cluster_id, '/etc/rancher/k3s/registries.yaml', k3s_registries())
         qa_exec(cluster_id, f'chown -R {localuser}:{localuser} /home/{localuser}/.ssh')
 
-        # graceful agent-driven shutdown 
         pve_run(['qm', 'shutdown', str(cluster_id)])
         local_exec(f'sudo qm template {cluster_id}')
     kplan_tick()
 
-    # define image desc
     img_ts = str(datetime.now())
     image_desc = f'''
 cluster_name: {cluster_name}
@@ -188,11 +152,9 @@ k3s_version: {k3s_version}
 created: {img_ts}
 config_hash: {config_hash(IMAGE_CONFIG_OPTS)}'''
 
-    # tag and describe the template
     pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name}'])
     kplan_tick()
 
-# destroy image
 def image_destroy() -> None:
     kname = 'image_'
     kmsg(f'{kname}destroy', f'{kopsrox_img()}/{cloud_image_desc}', 'sys')
@@ -201,14 +163,11 @@ def image_destroy() -> None:
 
 def run(cmd: str, arg: str | None = None) -> None:
 
-    # create image ( rebuilds from scratch if one already exists )
     if cmd == 'create':
         image_create()
 
-    # image info
     if cmd == 'info':
         image_info()
 
-    # destroy image
     if cmd == 'destroy':
         image_destroy()

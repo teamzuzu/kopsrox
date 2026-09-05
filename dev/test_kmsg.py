@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-# checks for lib/kopsrox_kmsg.py
-# scripted: runs itself as a child with piped ( non tty ) stdout and asserts on plain output
-# visual: run in a terminal for a live spinner / bar / color demo after the asserts pass
+# checks for lib/kopsrox_kmsg.py - asserts on plain output when piped,
+# live spinner / bar / color demo when run on a tty
 
 import sys, os, time, subprocess
 
@@ -35,7 +34,6 @@ if os.environ.get('KMSG_CHILD') == 'raw':
     time.sleep(0.8)
   exit(0)
 
-# child mode - emit through the real module with piped stdout
 if os.environ.get('KMSG_CHILD'):
   sys.path[0:0] = ['lib/']
   from kopsrox_kmsg import kmsg, kabort, kstep, kplan, kplan_tick
@@ -57,7 +55,6 @@ if os.environ.get('KMSG_CHILD'):
 
 env = dict(os.environ, KMSG_CHILD = '1')
 
-# clean run
 run = subprocess.run([sys.executable, __file__], env = env, capture_output = True, text = True)
 out = run.stdout
 assert run.returncode == 0, f'expected exit 0 got {run.returncode}\n{out}{run.stderr}'
@@ -70,15 +67,12 @@ assert '· test:step' in out, 'non-quiet step missing start line: ' + out
 assert '✓ test:step' in out and 'visible step (' in out, 'non-quiet step missing done line: ' + out
 assert 'test:quiet' not in out, 'quiet step printed in non-tty: ' + out
 
-# abort run
 run = subprocess.run([sys.executable, __file__, 'abort'], env = env, capture_output = True, text = True)
 assert run.returncode == 1, f'kabort should exit 1 - got {run.returncode}'
 assert '✗ test:abort' in run.stdout, run.stdout
 
-# scroll regressions - the live region must never creep down the screen
-# wrap: lines wider than the terminal ( clear_live counts logical lines )
-# raw: sudo use_pty flips the tty to raw mode during image builds - no ONLCR
-#      so a bare \n no longer implies carriage return
+# scroll regressions - the live region must never creep down the screen.
+# wrap: lines wider than the terminal. raw: no ONLCR, as sudo use_pty leaves it
 import pty, fcntl, termios, struct
 WIDTH = 60
 
@@ -100,8 +94,7 @@ def pty_run(mode):
   os.waitpid(pid, 0)
   return data.decode(errors = 'replace')
 
-# minimal terminal sim - how far down does the cursor travel
-# lf_resets_col False models a raw mode tty where \n does not return the carriage
+# minimal terminal sim - lf_resets_col False models a raw mode tty
 def max_row(text, lf_resets_col = True):
   row = col = maxrow = i = 0
   while i < len(text):
@@ -136,7 +129,6 @@ assert rows <= 4, f'raw tty: live region scrolled down {rows} rows in a {WIDTH} 
 
 print('kmsg tests OK')
 
-# visual demo when run interactively
 if sys.stdout.isatty():
   sys.path[0:0] = ['lib/']
   from kopsrox_kmsg import kmsg, kstep, kplan, kplan_tick

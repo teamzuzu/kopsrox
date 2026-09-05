@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 
-# kopsrox config schema - single source of truth for every kopsrox.ini option
-# pure module: no proxmox, no argv, no side effects
-# imported by kopsrox_config ( validation ) and dev/test_config.py; also renders
-# and writes the default kopsrox.ini itself ( render_ini / init_kopsrox_ini )
-# it must never import kopsrox_config - the default ini is generated exactly when kopsrox.ini is missing
+# single source of truth for every kopsrox.ini option, and the renderer for the
+# default ini. pure - and it must never import kopsrox_config
 
 import base64, struct
 
 from configparser import ConfigParser
 from kopsrox_kmsg import kabort
 
-# validators - called as check(kname, value) after type coercion
 def check_cluster_id(kname: str, value: int) -> None:
     if value < 100:
         kabort(kname, f'cluster_id is too low - should be over 100')
@@ -28,15 +24,12 @@ def check_vm_ram(kname: str, value: int) -> None:
     if value < 2:
         kabort(kname, f'vm_ram - kopsrox vms need 2G RAM')
 
-# recognised openssh public-key type prefixes ( authorized_keys format )
 SSH_KEY_TYPES = ('ssh-rsa', 'ssh-ed25519', 'ssh-dss',
                  'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521',
                  'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com')
 
-# validate a real openssh public key, not just an 'ssh-' prefix: the key type
-# must be recognised, the base64 blob must decode, and the algorithm name encoded
-# in the blob ( first length-prefixed field ) must match the type - this catches
-# a truncated / corrupt / mis-pasted key that a prefix check would wave through
+# the type must be recognised, the blob must decode, and the algorithm named
+# inside it must match the type
 def check_sshkey(kname: str, value: str) -> None:
     err = ('[kopsrox]/localsshkey - not a valid ssh public key ( openssh '
            'authorized_keys format eg "ssh-ed25519 AAAAC3... user@host" )')
@@ -57,20 +50,14 @@ def check_masters(kname: str, value: int) -> None:
     if not (value == 1 or value == 3):
         kabort(kname, f'[cluster] - masters: only 1 or 3 masters supported. You have: {value}')
 
-# one option definition
-# comment: None, a string or a list of strings - rendered as ; lines above the option
-# commented: option ships commented out and resolves to default when absent
-# var: the module global the value lands in ( ini names with hyphens need one )
-# ini_value: literal text written to the default ini when it differs from default
+# commented: ships commented out, resolving to default. var: the global it
+# lands in. ini_value: literal default text
 def opt(name, comment, default, kind = str, blank_ok = False, commented = False, check = None, var = None, ini_value = None) -> dict:
     return {'name': name, 'comment': comment, 'default': default, 'kind': kind, 'blank_ok': blank_ok,
             'commented': commented, 'check': check, 'var': var or name, 'ini_value': ini_value}
 
 # every kopsrox.ini option in ini order - adding an option means adding one entry here
 SCHEMA = [
-    # kopsrox runs on the proxmox node itself and drives it through the local
-    # qm / pvesm / pvesh cli ( no http api ), so no endpoint / token / node
-    # options are needed - the node is auto-detected from the hostname
     opt('proxmox_storage', 'the proxmox storage to use for kopsrox - needs to be available on the proxmox node', 'local-lvm'),
     opt('oci_image', 'the OCI image used to build the microvm template ( via pve-microvm-template )', 'ubuntu:26.04'),
     opt('microvm_kernel', 'kernel/initrd used to boot kopsrox microvms - built with dev/build-kopsrox-kernel.sh',
@@ -109,18 +96,14 @@ SCHEMA = [
     opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket'),
 ]
 
-# validate a parsed kopsrox.ini against the schema
-# returns { var: typed value } - aborts with todays messages on any problem
 def validate(parser: ConfigParser) -> dict:
 
-    # resolve cluster_name first so later messages carry it
     kname = 'config_check'
     values = {}
 
     def resolve(entry):
         name = entry['name']
 
-        # commented options fall back to their default when absent
         if entry['commented']:
             raw = parser.get('kopsrox', name, fallback = entry['default'])
         else:
@@ -130,14 +113,12 @@ def validate(parser: ConfigParser) -> dict:
             if raw == '' and not entry['blank_ok']:
                 kabort(kname, f'{name} - a value is required')
 
-        # int options
         if entry['kind'] is int:
             try:
                 raw = int(raw)
             except Exception:
                 kabort(kname, f'{name} should be numeric: {raw}')
 
-        # option specific check
         if entry['check']:
             entry['check'](kname, raw)
         return raw
@@ -153,8 +134,6 @@ def validate(parser: ConfigParser) -> dict:
 
     return values
 
-# build the default ini from the schema - same allow_no_value comment
-# technique the old hand written generator used, so the format is unchanged
 def render_ini() -> ConfigParser:
     config = ConfigParser(allow_no_value = True)
     ks = 'kopsrox'
@@ -172,7 +151,6 @@ def render_ini() -> ConfigParser:
 
     return config
 
-# write the default kopsrox.ini - called by kopsrox.py when none exists yet
 def init_kopsrox_ini() -> None:
     with open('kopsrox.ini', 'w') as cfile:
         render_ini().write(cfile)
