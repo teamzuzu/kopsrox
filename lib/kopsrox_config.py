@@ -38,6 +38,9 @@ def pve_run(args: list[str], input: str | None = None, timeout: int | None = Non
     return cp
 
 
+# upstream pve-microvm sources - raw tree, used by the kernel-drift notice in init()
+MICROVM_RAW_URL = 'https://raw.githubusercontent.com/rcarmo/pve-microvm/main'
+
 # config-drift detection: the ini options that only take effect via a rebuild.
 # IMAGE_CONFIG_OPTS are baked into the image ( change -> image create ); the k3s
 # version is deliberately excluded, it keeps its own more specific notice.
@@ -54,6 +57,27 @@ def config_hash(names) -> str:
     g = globals()
     blob = '\n'.join(f'{n}={g.get(n, "")}' for n in names)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+# read the version out of a bzImage boot header. the kopsrox microvm kernel is
+# built by dev/build-kopsrox-kernel.sh rather than installed from a package, so
+# there is no dpkg entry to query and no /lib/modules in the guest to read it
+# back from - the version only exists inside the binary. layout: the 'HdrS' magic
+# sits at 0x202 and a 2-byte little-endian offset at 0x20e points at the
+# nul-terminated version string, relative to 0x200. returns just the version
+# token ( eg '6.12.22' from '6.12.22 (user@host) #1 SMP ...' ), or '' when the
+# file is missing or is not a bzImage - callers treat '' as "unknown" and stay
+# quiet rather than erroring, this only ever drives a notice
+def kernel_version(path: str) -> str:
+    try:
+        with open(path, 'rb') as kernel_file:
+            head = kernel_file.read(0x10000)
+        if head[0x202:0x206] != b'HdrS':
+            return ''
+        off = int.from_bytes(head[0x20e:0x210], 'little') + 0x200
+        return head[off:head.index(b'\x00', off)].decode().split()[0]
+    except Exception:
+        return ''
 
 
 # look up kopsrox_img name
@@ -342,6 +366,25 @@ def init(verb: str, cmd: str) -> None:
             microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
             if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
                 kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} )', 'sys')
+        except Exception:
+            pass
+
+        # notify if upstream has moved the microvm kernel on. nothing bumps the
+        # kopsrox kernel for us - it is built by hand from upstream's builder, is
+        # not a package, and is entirely independent of the proxmox host kernel
+        # ( guests direct-kernel-boot it via --args, they never use the host's ).
+        # upstream's build-kernel.sh carries the version it targets as
+        # DEFAULT_VERSION, so compare that against the version read back out of
+        # the built binary. skipped quietly when offline, when the kernel has not
+        # been built yet ( image_create() kaborts on that with a better message )
+        # or when either version does not parse as a plain x.y.z
+        try:
+            microvm_builder = requests.get(f'{MICROVM_RAW_URL}/kernel/build-kernel.sh', timeout=3).text
+            kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', microvm_builder).group(1)
+            kernel_built = kernel_version(g['microvm_kernel'])
+            if tuple(map(int, kernel_latest.split('.'))) > tuple(map(int, kernel_built.split('.'))):
+                kmsg(g['kname'], f'pve-microvm kernel {kernel_latest} is available ( kopsrox kernel: '
+                     f'{kernel_built} ) - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
         except Exception:
             pass
 

@@ -79,4 +79,41 @@ parser = fresh_parser()
 parser.set('kopsrox', 'extra_packages', '')
 assert validate(parser)['extra_packages'] == ''
 
+# kernel_version() - reads a bzImage boot header. importing kopsrox_config is
+# safe here: nothing runs at import time, the proxmox work is all inside init()
+from kopsrox_config import kernel_version
+
+# synthesise a minimal bzImage header: 'HdrS' magic at 0x202 and a 2-byte LE
+# offset at 0x20e pointing at the nul-terminated version string ( from 0x200 )
+def fake_bzimage(version, magic = b'HdrS', str_off = 0x1000):
+  buf = bytearray(0x10000)
+  buf[0x202:0x206] = magic
+  buf[0x20e:0x210] = str_off.to_bytes(2, 'little')
+  ver = version.encode() + b'\x00'
+  buf[0x200 + str_off:0x200 + str_off + len(ver)] = ver
+  return bytes(buf)
+
+def write_tmp(blob):
+  import tempfile
+  fh = tempfile.NamedTemporaryFile(delete = False)
+  fh.write(blob)
+  fh.close()
+  return fh.name
+
+# a well formed header yields just the version token, not the whole build string
+assert kernel_version(write_tmp(fake_bzimage('6.12.99'))) == '6.12.99'
+assert kernel_version(write_tmp(fake_bzimage('6.12.22 (u@h) #1 SMP Wed Jul 29'))) == '6.12.22'
+
+# unreadable / not a bzImage is "unknown" ( '' ), never an exception
+assert kernel_version(write_tmp(fake_bzimage('6.12.99', magic = b'XXXX'))) == '', 'bad magic'
+assert kernel_version(write_tmp(b'not a kernel')) == '', 'too short'
+assert kernel_version('/nonexistent/vmlinuz-kopsrox') == '', 'missing file'
+assert kernel_version(write_tmp(fake_bzimage('6.12.99', str_off = 0xfffe))) == '', 'offset past the buffer'
+
+# and against the real kernel when this is running on a kopsrox node
+import os
+real = '/usr/share/pve-microvm/vmlinuz-kopsrox'
+if os.path.isfile(real):
+  assert kernel_version(real)[:1].isdigit(), f'unexpected version from {real}'
+
 print('config schema tests OK')
