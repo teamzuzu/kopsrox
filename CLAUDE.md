@@ -64,3 +64,19 @@ Error-handling convention: errors go through `kabort(kname, msg)` — an `err` l
 ## General
 
 Never commit as Claude always use the details im users .gitconfig
+
+**Keep comments minimal.** The codebase was deliberately cut from 657 comment lines to 125 — do not grow it back. Default to no comment: the code, the function name and CLAUDE.md should carry the meaning. Comment density is a budget, not a free resource, so adding one anywhere is a reason to check whether an older one nearby has become redundant.
+
+Write a comment only when it says something a reader cannot get from the code, and keep it to one or two lines:
+
+- **a trap** — where the obvious "fix" would break something. The saved token being mandatory for `--cluster-reset`, `\bReady\b` needing the word boundary because plain `Ready` matches `NotReady`, never using `k3s-uninstall.sh`, the `exit 0` on the discovery spawn, the explicit `\r\n` in `kmsg`.
+- **a non-obvious cost** — the ~1.4s pve-perl spawn, the fixed ~0.5-1s guest-agent round trip. These explain why code is shaped oddly for speed.
+- **an external contract** — a bzImage header offset, a pve conf format, a k3s flag's semantics.
+
+Do NOT write:
+
+- restatements of the next line (`# destroy vm` above `prox_destroy()`, `# define kname`, `# return sorted dict`)
+- history or changelog — what the code used to do, how many round trips it took before batching, which upstream release changed it, what bug a line once fixed. That belongs in the commit message and git log.
+- rationale already recorded in this file. Link the concept by name instead of restating the reasoning inline.
+
+When editing, prefer deleting a stale comment to updating it. If a comment block has grown past ~4 lines, it is documentation — move it here and leave a pointer.
