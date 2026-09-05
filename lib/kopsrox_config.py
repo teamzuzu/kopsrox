@@ -346,21 +346,32 @@ def init(verb: str, cmd: str) -> None:
     if verb == 'image' and cmd == 'create':
 
         # pve-microvm version checks
-        # kopsrox needs 0.3.22+ - it is the template layout patch_microvm_template()
-        # anchors on ( 0.3.22 replaced the inline resolv.conf guard with
-        # ensure_rootfs_resolver() and made the chroot package install
-        # fail-closed ), and upstream calls it the supported release for
-        # everything back to 0.3.17
+        # kopsrox needs 0.3.24+, for three separate reasons:
+        # - 0.3.22 is the template layout patch_microvm_template() anchors on
+        #   ( it replaced the inline resolv.conf guard with
+        #   ensure_rootfs_resolver() and made the chroot package install
+        #   fail-closed )
+        # - 0.3.23 fixed linked-clone disk format detection. clone() runs
+        #   'qm clone' with no --full against a base volume, so every kopsrox
+        #   node IS a linked clone; before 0.3.23 pve-microvm called a
+        #   nonexistent PVE::Storage::volume_format() and fell back to raw,
+        #   booting a file-backed qcow2 clone through the wrong qemu block
+        #   driver. lvm-thin / zfs are raw anyway so it cannot bite there, but
+        #   proxmox_storage is free-form and dir/nfs storage would corrupt
+        # - 0.3.24 keeps exactly one qemu-guest-agent.service and drops the
+        #   competing microvm-agent unit. every single thing kopsrox does inside
+        #   a node goes through that agent ( qa_exec / qa_write ), so a template
+        #   that can deadlock two agents on /dev/vport1p1 is not a supported base
         g['microvm_ver'] = subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"], text=True, capture_output=True).stdout.strip()
         microvm_ver = g['microvm_ver']
         if microvm_ver == 'none':
             kabort(g['kname'], 'pve-microvm is not installed - see README.md')
         microvm_installed = tuple(map(int, microvm_ver.split('-')[0].split('.')))
-        if microvm_installed < (0, 3, 22):
-            kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.22 or later')
+        if microvm_installed < (0, 3, 24):
+            kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.24 or later')
 
         # notify if upstream has a newer release - skip quietly if offline
-        # no pvedaemon hint: the 0.3.22 floor is well past 0.3.20, whose postinst
+        # no pvedaemon hint: the 0.3.24 floor is well past 0.3.20, whose postinst
         # restarts pvedaemon itself ( 0.3.22 also try-restarts it on configure )
         try:
             microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
