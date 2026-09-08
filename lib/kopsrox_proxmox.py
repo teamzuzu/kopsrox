@@ -256,11 +256,7 @@ def prox_destroy(vmid: int) -> None:
 
     vmname = vmnames[vmid]
 
-    if vmid == cluster_id:
-        pve_run(['qm', 'destroy', str(cluster_id)], kname = kname)
-        return
-
-    # ignore a stop error for an already-stopped vm
+    # ignore a stop error for an already-stopped vm or a template
     with kstep(kname, f'destroying {vmname}'):
         pve_run(['qm', 'stop', str(vmid)], check = False, kname = kname)
         pve_run(['qm', 'destroy', str(vmid)], kname = kname)

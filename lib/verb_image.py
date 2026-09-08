@@ -13,6 +13,7 @@ from kopsrox_config import (
     cluster_id,
     cluster_name,
     config_hash,
+    disc_vms,
     extra_packages,
     image_info,
     k3s_version,
@@ -106,6 +107,11 @@ def image_create() -> None:
     open('./lib/manifests/config.yaml', 'w').write(k3s_config('master'))
     open('./lib/manifests/registries.yaml', 'w').write(k3s_registries())
 
+
+    # pve-microvm >= 0.3.25 refuses --refresh on a vmid that is not a stopped
+    # template, which is exactly what a half finished build leaves behind
+    if cluster_id in disc_vms:
+        prox_destroy(cluster_id)
 
     microvm_template = patch_microvm_template()
     with kstep(f'{kname}template', f'creating {cluster_name} template') as step:
