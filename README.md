@@ -18,7 +18,7 @@ Get the latest release: https://github.com/teamzuzu/kopsrox/releases
 ## Requirements
 
 - A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node.
-- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node.
+- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. v0.3.25 is the current release and is supported; kopsrox tells you when a newer one is out.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
@@ -49,7 +49,7 @@ Build the kopsrox microvm kernel. This is a one-time step — the stock pve-micr
 ./dev/build-kopsrox-kernel.sh
 ```
 
-This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`.
+This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`. The guest kernel is independent of the Proxmox host kernel and nothing updates it automatically, so `image create` compares the built kernel against the version upstream currently ships and tells you when it is worth rebuilding.
 
 ## Configuration
 
@@ -144,7 +144,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 ### image
 
-- **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch if a template already exists. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, the kube-vip/traefik manifest, and the `registries.yaml` enabling the embedded registry mirror - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
+- **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch: any existing VM on `cluster_id` is destroyed first, including one left behind by an interrupted build. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, the kube-vip/traefik manifest, and the `registries.yaml` enabling the embedded registry mirror - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
 - **info** — prints the template description (source image, k3s version, creation time) and its storage volume.
 - **destroy** — deletes the image template.
 
