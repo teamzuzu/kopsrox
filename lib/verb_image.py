@@ -115,7 +115,11 @@ def image_create() -> None:
 
     microvm_template = patch_microvm_template()
     with kstep(f'{kname}template', f'creating {cluster_name} template') as step:
-        local_exec(f'sudo bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
+        # pve-microvm >= 0.3.27 resolves its scratch root to /tmp, which is tmpfs
+        # on a stock pve node - the extracted rootfs plus the raw/qcow2 disk would
+        # be built in ram alongside the running cluster
+        local_exec(f'sudo env PVE_MICROVM_TMP_ROOT=/var/cache/pve-microvm \
+bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 --name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 4G --memory {vm_ram * 1024} \
 --cores {vm_cpu} --bridge {network_bridge} --refresh --profile standard --no-docker \
 > kopsrox-image.log 2>&1')

@@ -34,6 +34,11 @@ def pve_run(args: list[str], input: str | None = None, timeout: int | None = Non
 
 MICROVM_RAW_URL = 'https://raw.githubusercontent.com/rcarmo/pve-microvm/main'
 
+# the exact inputs dev/build-kopsrox-kernel.sh merges, in the order it merges them -
+# both sides hash the same byte stream, so they must stay in step
+KERNEL_BUILD_INPUTS = ('build-kernel.sh', 'pve-microvm-6.12.config', 'pve-microvm-overlay.config')
+KOPSROX_KERNEL_CONFIG = './lib/scripts/kopsrox-kernel.config'
+
 # ini options that only take effect via a rebuild. a hash of each group is recorded
 # in the i0 / m1 descriptions and compared in init() - secrets are stored hashed
 IMAGE_CONFIG_OPTS = ('oci_image', 'localuser', 'localpass', 'localsshkey', 'network_dns', 'extra_packages', 'nfs_server', 'nfs_path')
@@ -259,14 +264,27 @@ def init(verb: str, cmd: str) -> None:
         except Exception:
             pass
 
-        # same for the guest kernel - unrelated to the proxmox host kernel
+        # same for the guest kernel - unrelated to the proxmox host kernel. upstream
+        # also reconfigures it without bumping DEFAULT_VERSION ( landlock at 0.3.27,
+        # erofs at 0.3.28 ), so compare a hash of the build inputs as well
         try:
-            microvm_builder = requests.get(f'{MICROVM_RAW_URL}/kernel/build-kernel.sh', timeout=3).text
-            kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', microvm_builder).group(1)
+            kernel_inputs = [requests.get(f'{MICROVM_RAW_URL}/kernel/{f}', timeout=3).content
+                             for f in KERNEL_BUILD_INPUTS]
+            kernel_inputs.append(open(KOPSROX_KERNEL_CONFIG, 'rb').read())
+            kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', kernel_inputs[0].decode()).group(1)
             kernel_built = kernel_version(g['microvm_kernel'])
+            kernel_id = hashlib.sha256(b''.join(kernel_inputs)).hexdigest()[:16]
+            try:
+                kernel_built_id = open(f'{g["microvm_kernel"]}.id').read().strip()
+            except Exception:
+                kernel_built_id = kernel_id
+
             if tuple(map(int, kernel_latest.split('.'))) > tuple(map(int, kernel_built.split('.'))):
                 kmsg(g['kname'], f'pve-microvm kernel {kernel_latest} is available ( kopsrox kernel: '
                      f'{kernel_built} ) - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
+            elif kernel_built_id != kernel_id:
+                kmsg(g['kname'], f'pve-microvm kernel {kernel_latest} config has changed since the kopsrox '
+                     f'kernel was built - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
         except Exception:
             pass
 

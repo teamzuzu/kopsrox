@@ -18,7 +18,7 @@ Get the latest release: https://github.com/teamzuzu/kopsrox/releases
 ## Requirements
 
 - A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node.
-- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. v0.3.25 is the current release and is supported; kopsrox tells you when a newer one is out.
+- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. v0.3.29 is the current release and is supported; kopsrox tells you when a newer one is out.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
@@ -41,7 +41,7 @@ sudo dpkg -i pve-microvm_*.deb
 sudo systemctl restart pvedaemon
 ```
 
-> **Important:** always restart `pvedaemon` after installing or upgrading pve-microvm. It keeps the previous version loaded in memory. (kopsrox drives VMs through `qm`, which loads the current code on every invocation, so this mainly affects the Proxmox web UI and API — but restarting it is good practice.)
+> **Important:** always restart `pvedaemon` after installing or upgrading pve-microvm. It keeps the previous version loaded in memory. (kopsrox drives VMs through `qm`, which loads the current code on every invocation, so this mainly affects the Proxmox web UI and API — but restarting it is good practice. v0.3.26 and later reload it for you on upgrade.)
 
 Build the kopsrox microvm kernel. This is a one-time step — the stock pve-microvm kernel is missing features k3s requires, such as VXLAN and veth:
 
@@ -49,7 +49,7 @@ Build the kopsrox microvm kernel. This is a one-time step — the stock pve-micr
 ./dev/build-kopsrox-kernel.sh
 ```
 
-This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`. The guest kernel is independent of the Proxmox host kernel and nothing updates it automatically, so `image create` compares the built kernel against the version upstream currently ships and tells you when it is worth rebuilding.
+This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`. Because it builds on top of upstream's own config, any option upstream adds comes along for free — Landlock in v0.3.27 and built-in EROFS in v0.3.28, for example. The guest kernel is independent of the Proxmox host kernel and nothing updates it automatically, so `image create` tells you when it is worth rebuilding: it compares both the kernel version upstream currently ships and a fingerprint of the config it ships it with, since upstream reconfigures the kernel without always bumping its version.
 
 ## Configuration
 
@@ -199,7 +199,7 @@ Neither works on microvm. The guest has no DMI/SMBIOS, so the cloud controller's
 
 **`qm shutdown` / `qm reboot` don't work from the Proxmox UI.**
 
-They do, as of pve-microvm v0.3.19 (a fix kopsrox contributed upstream). On v0.3.20+ the package restarts pvedaemon itself (v0.3.22 also `try-restart`s it when qemu-server triggers fire); on anything older, `systemctl restart pvedaemon` after an install or upgrade, or VMs started via the API keep running the old code.
+They do, as of pve-microvm v0.3.19 (a fix kopsrox contributed upstream). On v0.3.20+ the package restarts pvedaemon itself (v0.3.22 also `try-restart`s it when qemu-server triggers fire, and v0.3.26 softened that to a graceful reload so it stops killing the web UI's terminal mid-upgrade); on anything older, `systemctl restart pvedaemon` after an install or upgrade, or VMs started via the API keep running the old code.
 
 **Be careful with `qm stop`.**
 
