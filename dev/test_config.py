@@ -139,4 +139,36 @@ assert config_drift() == [], 'absent baselines must stay silent'
 drift_globals(cloud_image_desc = '', image_config_hash_baked = '', cluster_config_hash_baked = '')
 assert config_drift() == [], 'no image must stay silent'
 
+# sudo_check() - kopsrox drives proxmox through sudo, so a password prompt would
+# hang on captured stderr. patched here so the negative path is testable
+from kopsrox_config import sudo_check
+
+class FakeRun:
+  def __init__(self, returncode): self.returncode = returncode
+
+def with_sudo(euid, returncode):
+  real_geteuid, real_run = kopsrox_config.os.geteuid, kopsrox_config.subprocess.run
+  calls = []
+  kopsrox_config.os.geteuid = lambda: euid
+  kopsrox_config.subprocess.run = lambda *a, **kw: (calls.append(a[0]), FakeRun(returncode))[1]
+  try:
+    with contextlib.redirect_stdout(io.StringIO()):
+      sudo_check('test_sudo')
+    return 'ok', calls
+  except SystemExit as e:
+    return e.code, calls
+  finally:
+    kopsrox_config.os.geteuid, kopsrox_config.subprocess.run = real_geteuid, real_run
+
+result, calls = with_sudo(euid = 0, returncode = 1)
+assert result == 'ok', 'root must pass regardless of sudo'
+assert calls == [], 'root must not spawn sudo at all'
+
+result, calls = with_sudo(euid = 1000, returncode = 0)
+assert result == 'ok', 'passwordless sudo must pass'
+assert calls == [['sudo', '-n', 'true']], calls
+
+result, calls = with_sudo(euid = 1000, returncode = 1)
+assert result == 1, f'sudo needing a password must abort with exit 1, got {result}'
+
 print('config schema tests OK')

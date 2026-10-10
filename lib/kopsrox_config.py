@@ -32,6 +32,25 @@ def pve_run(args: list[str], input: str | None = None, timeout: int | None = Non
     return cp
 
 
+# every pve call goes through sudo, and a password prompt would land on captured
+# stderr - kopsrox would look hung rather than failed. -n plus a closed stdin so
+# it can never block, whatever the sudoers config
+def sudo_check(kname: str) -> None:
+    if os.geteuid() == 0:
+        return
+    try:
+        cp = subprocess.run(['sudo', '-n', 'true'], stdin = subprocess.DEVNULL,
+                            capture_output = True, timeout = 5)
+    except Exception as e:
+        kabort(kname, f'unable to run sudo: {e}')
+    if cp.returncode != 0:
+        kabort(kname, 'kopsrox needs to run qm / pvesm / pvesh as root, but sudo here wants a '
+               f'password. either run kopsrox as root, or give {os.environ.get("USER", "this user")} '
+               'a passwordless entry:\n'
+               f'  echo "{os.environ.get("USER", "<user>")} ALL=(ALL) NOPASSWD:ALL" | '
+               f'sudo tee /etc/sudoers.d/kopsrox')
+
+
 MICROVM_RAW_URL = 'https://raw.githubusercontent.com/rcarmo/pve-microvm/main'
 
 # the exact inputs dev/build-kopsrox-kernel.sh merges, in the order it merges them -
@@ -220,6 +239,8 @@ def init(verb: str, cmd: str) -> None:
     if not os.path.isdir(f'/etc/pve/nodes/{proxmox_node}'):
         kabort(g['kname'], f'this host ({proxmox_node}) does not look like a proxmox node - '
                'kopsrox must run on the pve node itself ( qm / pvesm / pvesh )')
+
+    sudo_check(g['kname'])
 
     cluster_id = g['cluster_id']
 

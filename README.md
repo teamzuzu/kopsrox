@@ -16,7 +16,7 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 
 ## Requirements
 
-- A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node.
+- A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node, and checks this on startup.
 - [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. v0.3.29 is the current release and is supported; kopsrox tells you when a newer one is out.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
@@ -24,7 +24,13 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 
 ## Installation
 
-kopsrox runs **on the Proxmox node itself** and drives it through the local `qm`, `pvesm` and `pvesh` commands (via `sudo`) — there is no HTTP API connection, so no endpoint, user or API token to configure. Run it as root, or as a user who can `sudo qm`.
+kopsrox runs **on the Proxmox node itself** and drives it through the local `qm`, `pvesm` and `pvesh` commands (via `sudo`) — there is no HTTP API connection, so no endpoint, user or API token to configure. Run it as root, or as a user with a passwordless sudo entry:
+
+```
+echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/kopsrox
+```
+
+kopsrox checks this before its first Proxmox call and tells you how to fix it if sudo wants a password.
 
 Install the Python dependencies:
 
