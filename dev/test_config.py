@@ -25,14 +25,17 @@ def fresh_parser():
     parser.set('kopsrox', name, value)
   return parser
 
-def expect_abort(mutate):
+def expect_abort(mutate, expect = None):
   parser = fresh_parser()
   mutate(parser)
+  out = io.StringIO()
   try:
-    with contextlib.redirect_stdout(io.StringIO()):
+    with contextlib.redirect_stdout(out):
       validate(parser)
   except SystemExit as e:
     assert e.code == 1, f'abort should exit 1 not {e.code}'
+    if expect:
+      assert expect in out.getvalue(), f'expected {expect!r} in abort, got: {out.getvalue().strip()}'
     return
   assert False, 'expected validate() to abort'
 
@@ -63,7 +66,8 @@ expect_abort(lambda p: p.set('kopsrox', 'vm_ram', 'x'))
 expect_abort(lambda p: p.set('kopsrox', 'masters', '2'))
 expect_abort(lambda p: p.set('kopsrox', 'cluster_id', '99'))
 expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'notakey'))
-expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-rsa cioieocieo'))            # schema placeholder
+expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-rsa cioieocieo'),
+             expect = 'still the placeholder')   # rejected as a placeholder, not as malformed
 expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-ed25519'))                    # no blob
 expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-ed25519 not!base64!'))        # bad base64
 expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-rsa ' + VALID_SSHKEY.split()[1]))  # ed25519 blob under ssh-rsa type - type/blob mismatch
@@ -76,7 +80,8 @@ expect_abort(lambda p: p.set('kopsrox', 'vm_ram', '1'))
 S3_REQUIRED = ('s3_endpoint', 's3_access-key', 's3_access-secret', 's3_bucket')
 for name in S3_REQUIRED:
   placeholder = next(e['default'] for e in SCHEMA if e['name'] == name)
-  expect_abort(lambda p, n = name, v = placeholder: p.set('kopsrox', n, v))   # still the shipped placeholder
+  expect_abort(lambda p, n = name, v = placeholder: p.set('kopsrox', n, v),
+               expect = 'etcd snapshots and cluster restore')   # still the shipped placeholder
   expect_abort(lambda p, n = name: p.set('kopsrox', n, ''))                   # blank
   expect_abort(lambda p, n = name: p.remove_option('kopsrox', n))             # missing
 

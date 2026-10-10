@@ -61,7 +61,7 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 | Option | Purpose |
 | --- | --- |
 | `oci_image` | The OCI image nodes are built from. The default `ubuntu:26.04` is well-tested; other apt-based images should work but are untested. |
-| `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image create` to take effect. |
+| `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create` time. There is no cloud-init on microvm, so this is how kopsrox provisions login access - changing these values needs an `image create` to take effect. **`localsshkey` is required** and must be your own key: it is the only way into a node over SSH, so kopsrox refuses to run while it is still the placeholder the generated ini ships with. |
 | `network_bridge` | The Proxmox bridge nodes attach to. For a Proxmox SDN, give the zone and vnet as `sdn/<zone>/<vnet>`. The image template is built on this bridge too, so it must have internet access. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
 | `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image create`. |

@@ -53,10 +53,12 @@ def check_masters(kname: str, value: int) -> None:
 # commented: ships commented out, resolving to default. var: the global it
 # lands in. ini_value: literal default text
 def opt(name, comment, default, kind = str, blank_ok = False, commented = False, check = None, var = None,
-        ini_value = None, must_change = False) -> dict:
+        ini_value = None, must_change = '') -> dict:
     return {'name': name, 'comment': comment, 'default': default, 'kind': kind, 'blank_ok': blank_ok,
             'commented': commented, 'check': check, 'var': var or name, 'ini_value': ini_value,
             'must_change': must_change}
+
+S3_REQUIRED = 'kopsrox needs a real s3 bucket for etcd snapshots and cluster restore'
 
 # every kopsrox.ini option in ini order - adding an option means adding one entry here
 SCHEMA = [
@@ -71,7 +73,9 @@ SCHEMA = [
     opt('vm_ram', 'amount of ram in Gib ', '2', kind = int, check = check_vm_ram),
     opt('localuser', 'username for the user created in each node ( via the guest agent )', 'user'),
     opt('localpass', 'password for the created user', 'admin'),
-    opt('localsshkey', 'ssh public key for the created user ( required )', 'ssh-rsa cioieocieo', check = check_sshkey),
+    opt('localsshkey', 'ssh public key for the created user ( required )', 'ssh-rsa cioieocieo',
+        check = check_sshkey,
+        must_change = 'it is baked into every node as the only way in over ssh'),
     opt('network_bridge', ['network bridge to use with kopsrox',
         'a proxmox sdn can be used by specifying the zone and vnet like this: sdn/zone/vnet'], 'vmbr0'),
     opt('network_ip', 'first ip of the ip range used for this kopsrox cluster', '192.168.0.160'),
@@ -91,11 +95,11 @@ SCHEMA = [
     opt('k3s_version', 'k3s version', 'v1.35.6+k3s1'),
     opt('kubelet_args', ['comma separated list of kubelet args applied to every node ( eg max-pods=250 )',
         'blank for none - takes effect on the next node join, no image rebuild needed'], '', blank_ok = True, commented = True),
-    opt('s3_endpoint', 's3 endpoint', 'kopsrox', must_change = True),
+    opt('s3_endpoint', 's3 endpoint', 'kopsrox', must_change = S3_REQUIRED),
     opt('s3_region', 's3 region - leave as \'\' for no region', '', commented = True, var = 'region', ini_value = '\'\''),
-    opt('s3_access-key', 's3 access key', 'e3898d39d39id93', var = 'access_key', must_change = True),
-    opt('s3_access-secret', 's3 access secret', 'ioewioeiowe', var = 'access_secret', must_change = True),
-    opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket', must_change = True),
+    opt('s3_access-key', 's3 access key', 'e3898d39d39id93', var = 'access_key', must_change = S3_REQUIRED),
+    opt('s3_access-secret', 's3 access secret', 'ioewioeiowe', var = 'access_secret', must_change = S3_REQUIRED),
+    opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket', must_change = S3_REQUIRED),
 ]
 
 def validate(parser: ConfigParser) -> dict:
@@ -114,11 +118,11 @@ def validate(parser: ConfigParser) -> dict:
             raw = parser.get('kopsrox', name)
             if raw == '' and not entry['blank_ok']:
                 kabort(kname, f'{name} - a value is required')
-            # s3 is not optional: k3s only contacts it on demand, so a placeholder
-            # builds a healthy cluster and only surfaces when a restore needs it
+            # must_change holds the reason, so a shipped placeholder is rejected as
+            # one rather than incidentally - eg the s3 block, which k3s only
+            # contacts on demand, so a placeholder surfaces only at restore time
             if entry['must_change'] and raw == entry['default']:
-                kabort(kname, f'{name} is still the placeholder shipped in kopsrox.ini - '
-                       'kopsrox needs a real s3 bucket for etcd snapshots and cluster restore')
+                kabort(kname, f'{name} is still the placeholder shipped in kopsrox.ini - {entry["must_change"]}')
 
         if entry['kind'] is int:
             try:
