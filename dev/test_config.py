@@ -10,12 +10,19 @@ from kopsrox_schema import SCHEMA, validate, render_ini
 
 VALID_SSHKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINkh+xKu9IA3Q+TE3+BAwiid8b1ThwSh1aDjYCUOSo1/ test@kopsrox'
 
+# the shipped ini is deliberately not valid as-is: the ssh key and the s3 block
+# are placeholders a user must replace, so every test starts from a real one
+VALID_S3 = {'s3_endpoint': 's3.example.com', 's3_access-key': 'AKIAreal',
+            's3_access-secret': 'realsecret', 's3_bucket': 'mybucket'}
+
 def fresh_parser():
   rendered = io.StringIO()
   render_ini().write(rendered)
   parser = ConfigParser()
   parser.read_string(rendered.getvalue())
   parser.set('kopsrox', 'localsshkey', VALID_SSHKEY)
+  for name, value in VALID_S3.items():
+    parser.set('kopsrox', name, value)
   return parser
 
 def expect_abort(mutate):
@@ -41,7 +48,7 @@ assert values['cluster_name'] == 'mycluster', values['cluster_name']
 assert values['cluster_id'] == 620 and type(values['cluster_id']) is int
 assert values['masters'] == 1 and type(values['masters']) is int
 assert values['region'] == '', 'commented s3_region should fall back to empty'
-assert values['access_key'] == 'e3898d39d39id93', 'hyphenated ini name must map to access_key'
+assert values['access_key'] == VALID_S3['s3_access-key'], 'hyphenated ini name must map to access_key'
 assert values['microvm_kernel'] == '/usr/share/pve-microvm/vmlinuz-kopsrox'
 assert values['microvm_initrd'] == '/usr/share/pve-microvm/initrd-kopsrox'
 assert values['extra_packages'] == 'nfs-common'
@@ -63,6 +70,25 @@ expect_abort(lambda p: p.set('kopsrox', 'localsshkey', 'ssh-rsa ' + VALID_SSHKEY
 expect_abort(lambda p: p.set('kopsrox', 'vm_cpu', '0'))
 expect_abort(lambda p: p.set('kopsrox', 'vm_disk', '10'))
 expect_abort(lambda p: p.set('kopsrox', 'vm_ram', '1'))
+
+# s3 is required for kopsrox to operate ( etcd snapshot / cluster restore ), so
+# the placeholders the ini ships with must not pass as a real config
+S3_REQUIRED = ('s3_endpoint', 's3_access-key', 's3_access-secret', 's3_bucket')
+for name in S3_REQUIRED:
+  placeholder = next(e['default'] for e in SCHEMA if e['name'] == name)
+  expect_abort(lambda p, n = name, v = placeholder: p.set('kopsrox', n, v))   # still the shipped placeholder
+  expect_abort(lambda p, n = name: p.set('kopsrox', n, ''))                   # blank
+  expect_abort(lambda p, n = name: p.remove_option('kopsrox', n))             # missing
+
+# a bucket that happens to match ANOTHER option's placeholder is still fine -
+# must_change compares each option against its own default, not the union
+ok = fresh_parser(); ok.set('kopsrox', 's3_bucket', 'kopsrox')
+assert validate(ok)['bucket'] == 'kopsrox'
+
+# region stays genuinely optional
+assert validate(fresh_parser())['region'] == ''
+pr = fresh_parser(); pr.set('kopsrox', 's3_region', 'us-east-1')
+assert validate(pr)['region'] == 'us-east-1'
 
 parser = fresh_parser()
 parser.set('kopsrox', 'extra_packages', '')

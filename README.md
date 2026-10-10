@@ -21,6 +21,7 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
+- An S3-compatible bucket (Cloudflare R2, Backblaze B2, MinIO, …). kopsrox requires it: etcd snapshots and `cluster restore` are the only disaster recovery it has, so S3 is not an optional extra.
 
 ## Installation
 
@@ -65,7 +66,7 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
 | `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image create`. |
 | `kubelet_args` | Optional. Comma-separated kubelet arguments applied to every node (for example `max-pods=250`). Takes effect on the next node join — no `image create` needed. |
-| `s3_*` | S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. |
+| `s3_*` | **Required.** S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. `s3_region` is optional; the rest must be real values — kopsrox refuses to run while they are still the placeholders the generated ini ships with. |
 
 ### VM ID and IP layout
 
@@ -126,7 +127,7 @@ kubectl --kubeconfig=<cluster_name>.kubeconfig get nodes
 
 With 3 masters, the Kubernetes API remains available even if the node holding the VIP is lost.
 
-**Back it up.** Configure the `s3_*` settings in `kopsrox.ini` for your provider, then:
+**Back it up.** The `s3_*` settings are required and were validated at startup, but that only proves they are filled in. `./kopsrox.py config check` asks the master to actually reach the bucket — worth doing before you rely on it, because k3s only contacts S3 on demand, so a wrong endpoint or key stays invisible until the day you need a restore. Then:
 
 ```
 ./kopsrox.py etcd snapshot

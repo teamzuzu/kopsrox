@@ -52,9 +52,11 @@ def check_masters(kname: str, value: int) -> None:
 
 # commented: ships commented out, resolving to default. var: the global it
 # lands in. ini_value: literal default text
-def opt(name, comment, default, kind = str, blank_ok = False, commented = False, check = None, var = None, ini_value = None) -> dict:
+def opt(name, comment, default, kind = str, blank_ok = False, commented = False, check = None, var = None,
+        ini_value = None, must_change = False) -> dict:
     return {'name': name, 'comment': comment, 'default': default, 'kind': kind, 'blank_ok': blank_ok,
-            'commented': commented, 'check': check, 'var': var or name, 'ini_value': ini_value}
+            'commented': commented, 'check': check, 'var': var or name, 'ini_value': ini_value,
+            'must_change': must_change}
 
 # every kopsrox.ini option in ini order - adding an option means adding one entry here
 SCHEMA = [
@@ -89,11 +91,11 @@ SCHEMA = [
     opt('k3s_version', 'k3s version', 'v1.35.6+k3s1'),
     opt('kubelet_args', ['comma separated list of kubelet args applied to every node ( eg max-pods=250 )',
         'blank for none - takes effect on the next node join, no image rebuild needed'], '', blank_ok = True, commented = True),
-    opt('s3_endpoint', 's3 endpoint', 'kopsrox'),
+    opt('s3_endpoint', 's3 endpoint', 'kopsrox', must_change = True),
     opt('s3_region', 's3 region - leave as \'\' for no region', '', commented = True, var = 'region', ini_value = '\'\''),
-    opt('s3_access-key', 's3 access key', 'e3898d39d39id93', var = 'access_key'),
-    opt('s3_access-secret', 's3 access secret', 'ioewioeiowe', var = 'access_secret'),
-    opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket'),
+    opt('s3_access-key', 's3 access key', 'e3898d39d39id93', var = 'access_key', must_change = True),
+    opt('s3_access-secret', 's3 access secret', 'ioewioeiowe', var = 'access_secret', must_change = True),
+    opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket', must_change = True),
 ]
 
 def validate(parser: ConfigParser) -> dict:
@@ -112,6 +114,11 @@ def validate(parser: ConfigParser) -> dict:
             raw = parser.get('kopsrox', name)
             if raw == '' and not entry['blank_ok']:
                 kabort(kname, f'{name} - a value is required')
+            # s3 is not optional: k3s only contacts it on demand, so a placeholder
+            # builds a healthy cluster and only surfaces when a restore needs it
+            if entry['must_change'] and raw == entry['default']:
+                kabort(kname, f'{name} is still the placeholder shipped in kopsrox.ini - '
+                       'kopsrox needs a real s3 bucket for etcd snapshots and cluster restore')
 
         if entry['kind'] is int:
             try:
