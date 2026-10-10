@@ -1,19 +1,18 @@
 # kopsrox
 
-kopsrox creates and manages highly available [k3s](https://k3s.io) clusters on [Proxmox VE](https://www.proxmox.com/), using lightweight microvms from [pve-microvm](https://github.com/rcarmo/pve-microvm).
+kopsrox is a script to create and manage [k3s](https://k3s.io) clusters on [Proxmox VE](https://www.proxmox.com/). It uses lightweight microvms from the [pve-microvm](https://github.com/rcarmo/pve-microvm) project. 
 
-- Nodes are microvms built from a plain OCI image (default `ubuntu:26.04`) — no ISOs or cloud images required.
+- Microvms are built from a plain OCI image (default `ubuntu:26.04`) — no ISOs or cloud images required.
 - Microvms boot in about one second; a fresh HA-capable cluster is ready in roughly 2.5 minutes.
 - Master and worker nodes are added or removed by editing a single config file and running one command.
 - [kube-vip](https://kube-vip.io/) is built in, providing a highly available VIP for the Kubernetes API and Traefik.
 - Storage is provided by the k3s local-path provisioner, with an optional NFS-backed storage class.
-- etcd snapshots can be pushed to and restored from S3-compatible storage with a single command.
-- All node configuration happens through the QEMU guest agent — no cloud-init and no SSH required, and it works before the node has networking.
-- The kubeconfig and k3s join token are exported automatically after every cluster operation.
-- k3s's embedded registry mirror is enabled, so a container image pulled by one node can be served to the others.
-- kopsrox notices when `kopsrox.ini` has drifted from what is actually baked into the image or the running cluster, and tells you which command to run.
+- Etcd snapshots can be pushed and restored from S3-compatible storage with a single command.
+- All node configuration happens through the QEMU guest agent — no cloud-init/ SSH required.
+- Kubeconfig and k3s join token are exported automatically.
+- Built in drift monitoring. 
 
-Get the latest release: https://github.com/teamzuzu/kopsrox/releases
+latest release: https://github.com/teamzuzu/kopsrox/releases
 
 ## Requirements
 
@@ -38,10 +37,7 @@ Install pve-microvm — see the [pve-microvm installation docs](https://github.c
 ```
 curl -sLO $(curl -s https://api.github.com/repos/rcarmo/pve-microvm/releases/latest | grep browser_download_url | grep '.deb' | cut -d'"' -f4)
 sudo dpkg -i pve-microvm_*.deb
-sudo systemctl restart pvedaemon
 ```
-
-> **Important:** always restart `pvedaemon` after installing or upgrading pve-microvm. It keeps the previous version loaded in memory. (kopsrox drives VMs through `qm`, which loads the current code on every invocation, so this mainly affects the Proxmox web UI and API — but restarting it is good practice. v0.3.26 and later reload it for you on upgrade.)
 
 Build the kopsrox microvm kernel. This is a one-time step — the stock pve-microvm kernel is missing features k3s requires, such as VXLAN and veth:
 
@@ -49,7 +45,7 @@ Build the kopsrox microvm kernel. This is a one-time step — the stock pve-micr
 ./dev/build-kopsrox-kernel.sh
 ```
 
-This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`. Because it builds on top of upstream's own config, any option upstream adds comes along for free — Landlock in v0.3.27 and built-in EROFS in v0.3.28, for example. The guest kernel is independent of the Proxmox host kernel and nothing updates it automatically, so `image create` tells you when it is worth rebuilding: it compares both the kernel version upstream currently ships and a fingerprint of the config it ships it with, since upstream reconfigures the kernel without always bumping its version.
+This fetches [pve-microvm's kernel builder](https://github.com/rcarmo/pve-microvm/tree/main/kernel), merges in the k3s configuration fragment from `lib/scripts/kopsrox-kernel.config`, and installs `/usr/share/pve-microvm/vmlinuz-kopsrox` and `initrd-kopsrox`. 
 
 ## Configuration
 
@@ -201,25 +197,13 @@ Microvms (via [pve-microvm](https://github.com/rcarmo/pve-microvm)) skip BIOS/UE
 
 Microvm guests boot a kernel supplied by the host and have no `/lib/modules`, so everything k3s needs (VXLAN for Flannel, veth, netfilter, ipset, BPF for cgroup v2, and more) must be compiled in. The stock pve-microvm kernel doesn't include these, so `dev/build-kopsrox-kernel.sh` builds one that does — a one-time step that takes roughly 10 minutes.
 
-**What happened to the Proxmox CSI driver and cloud controller manager?**
-
-Neither works on microvm. The guest has no DMI/SMBIOS, so the cloud controller's identity check can never pass, and the CSI driver needs disk hotplug into running guests, which pve-microvm doesn't support yet. Both were dropped: k3s runs its own embedded cloud-controller-manager (node providerIDs default to `k3s://<nodename>`), and storage is the k3s local-path provisioner. An optional NFS-backed storage class is available too — set `nfs_server`/`nfs_path` in `kopsrox.ini` (`extra_packages = nfs-common` is the default, and the kernel has the NFS client built in).
-
-**`qm shutdown` / `qm reboot` don't work from the Proxmox UI.**
-
-They do, as of pve-microvm v0.3.19 (a fix kopsrox contributed upstream). On v0.3.20+ the package restarts pvedaemon itself (v0.3.22 also `try-restart`s it when qemu-server triggers fire, and v0.3.26 softened that to a graceful reload so it stops killing the web UI's terminal mid-upgrade); on anything older, `systemctl restart pvedaemon` after an install or upgrade, or VMs started via the API keep running the old code.
-
-**Be careful with `qm stop`.**
-
-`qm stop` on a microvm is a hard power cut — there is no ACPI power button — so anything the guest hasn't synced to disk is lost. Use `./kopsrox.py node reboot` or `qm shutdown` for graceful operations instead.
-
 **Can I use a different OCI image than Ubuntu?**
 
 Set `oci_image` in `kopsrox.ini`. Other apt-based images (for example, `debian:trixie-slim`) should work but are untested with kopsrox. The kernel comes from the host either way — the image only provides the userland.
 
 **Can I migrate kopsrox VMs to other hosts in my Proxmox cluster?**
 
-This is mostly supported but largely untested — kopsrox builds everything on the node it runs on (auto-detected from the hostname; there is no `proxmox_node` option). Note that microvms do not support live migration.
+Sorry not tested this. Let us know how you get on?
 
 **The guest agent times out, or nodes can't reach the internet.**
 
