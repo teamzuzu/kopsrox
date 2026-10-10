@@ -38,6 +38,9 @@ cmds = {
         "list": '',
         "prune": '',
     },
+    "config": {
+        "check": '',
+    },
     "node": {
         "destroy": 'hostname',
         "utility": '',

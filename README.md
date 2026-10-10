@@ -142,6 +142,10 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 `./kopsrox.py [verb] [command] [arg]`
 
+### config
+
+- **check** — runs the full config checks in one place: validates `kopsrox.ini`, confirms `proxmox_storage` and the image template exist, reports any drift between the ini and what was actually built (k3s version, image settings, cluster settings), and checks upstream for a newer pve-microvm release or guest kernel. Every other command skips all of this and prints at most a one-line `config drift detected` hint, so they stay fast. Works before the first `image create`.
+
 ### image
 
 - **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch: any existing VM on `cluster_id` is destroyed first, including one left behind by an interrupted build. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, the kube-vip/traefik manifest, and the `registries.yaml` enabling the embedded registry mirror - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
@@ -188,6 +192,10 @@ Restoring lives under `cluster restore [snapshot]`, not `etcd` — a restore reb
 **Why microvms instead of full VMs?**
 
 Microvms (via [pve-microvm](https://github.com/rcarmo/pve-microvm)) skip BIOS/UEFI, PCI enumeration, and most emulated hardware. A node boots in about one second, and a whole cluster builds in roughly 2.5 minutes — with the same KVM isolation as a full VM, at a fraction of the overhead.
+
+**How do I check my config?**
+
+`./kopsrox.py config check` runs the full set: it validates `kopsrox.ini`, confirms the storage and image exist, reports any drift between the ini and what was actually built, and checks upstream for a newer pve-microvm release or guest kernel. Normal commands deliberately do none of this beyond a single `config drift detected` hint, so they stay fast.
 
 **Why does kopsrox need its own kernel?**
 

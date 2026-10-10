@@ -50,6 +50,78 @@ def config_hash(names) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
+# the commands that resolve drift - they must not nag about what they are fixing
+RESOLVING_CMDS = {('image', 'create'), ('cluster', 'create'), ('cluster', 'update'),
+                  ('cluster', 'restore'), ('config', 'check')}
+
+
+# each drifted group as a ready-to-print line, [] when clean. an absent baseline
+# is silent, so images / clusters built before the hashes existed never warn
+def config_drift() -> list[str]:
+    g = globals()
+    drift = []
+
+    image_k3s = re.search(r'k3s_version: (\S+)', g.get('cloud_image_desc', ''))
+    if image_k3s and image_k3s.group(1) != g['k3s_version']:
+        drift.append(f'kopsrox.ini k3s_version ({g["k3s_version"]}) differs from the image '
+                     f'({image_k3s.group(1)}) - run "image create" to rebuild, then "k3s upgrade" '
+                     f'to apply it to the running cluster')
+
+    if g.get('image_config_hash_baked') and g['image_config_hash_baked'] != config_hash(IMAGE_CONFIG_OPTS):
+        drift.append('kopsrox.ini image settings ( oci_image, localuser/pass/sshkey, network_dns, '
+                     'extra_packages, nfs_* ) changed since the image was built - run "image create" to apply')
+
+    if g.get('cluster_config_hash_baked') and g['cluster_config_hash_baked'] != config_hash(CLUSTER_CONFIG_OPTS):
+        drift.append('kopsrox.ini cluster settings ( s3_*, masters, workers, kubelet_args ) changed '
+                     'since the cluster was built - run "cluster update" to apply')
+
+    return drift
+
+
+def microvm_version() -> str:
+    return subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"],
+                          text = True, capture_output = True).stdout.strip()
+
+
+# network calls, so only "config check" pays for them
+def microvm_release_notice(kname: str) -> None:
+    installed = microvm_version()
+    try:
+        latest = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
+    except Exception:
+        return
+    sev = 'sys' if tuple(map(int, latest.lstrip('v').split('.'))) > tuple(map(int, installed.split('-')[0].split('.'))) else 'info'
+    kmsg(kname, f'pve-microvm {installed} installed ( latest: {latest} )', sev)
+
+
+# the guest kernel is unrelated to the proxmox host kernel. upstream also
+# reconfigures it without bumping DEFAULT_VERSION ( landlock at 0.3.27, erofs at
+# 0.3.28 ), so compare a hash of the build inputs as well
+def kernel_notice(kname: str) -> None:
+    try:
+        kernel_inputs = [requests.get(f'{MICROVM_RAW_URL}/kernel/{f}', timeout=3).content
+                         for f in KERNEL_BUILD_INPUTS]
+        kernel_inputs.append(open(KOPSROX_KERNEL_CONFIG, 'rb').read())
+        kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', kernel_inputs[0].decode()).group(1)
+        kernel_built = kernel_version(microvm_kernel)
+        kernel_id = hashlib.sha256(b''.join(kernel_inputs)).hexdigest()[:16]
+        try:
+            kernel_built_id = open(f'{microvm_kernel}.id').read().strip()
+        except Exception:
+            kernel_built_id = kernel_id
+    except Exception:
+        return
+
+    if tuple(map(int, kernel_latest.split('.'))) > tuple(map(int, kernel_built.split('.'))):
+        kmsg(kname, f'pve-microvm kernel {kernel_latest} is available ( kopsrox kernel: '
+             f'{kernel_built} ) - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
+    elif kernel_built_id != kernel_id:
+        kmsg(kname, f'pve-microvm kernel {kernel_latest} config has changed since the kopsrox '
+             f'kernel was built - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
+    else:
+        kmsg(kname, f'kopsrox kernel {kernel_built} ( current with pve-microvm )', 'info')
+
+
 # version out of a bzImage header - the hand-built kernel has no dpkg entry
 def kernel_version(path: str) -> str:
     try:
@@ -186,7 +258,7 @@ def init(verb: str, cmd: str) -> None:
     g['vms'] = {vmid: proxmox_node for vmid in sorted(disc_vms)}
     vms = g['vms']
 
-    if not (verb == 'image' and cmd == 'create'):
+    if verb != 'config' and not (verb == 'image' and cmd == 'create'):
         if cluster_id not in vms:
             kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
@@ -205,22 +277,9 @@ def init(verb: str, cmd: str) -> None:
     g['image_config_hash_baked'] = image_hash_match.group(1) if image_hash_match else ''
     g['cluster_config_hash_baked'] = cluster_hash_match.group(1) if cluster_hash_match else ''
 
-    # the ini changes nothing until image create rebuilds, so warn on a mismatch
-    image_k3s_match = re.search(r'k3s_version: (\S+)', g['cloud_image_desc'])
-    if not (verb == 'image' and cmd == 'create') and image_k3s_match and image_k3s_match.group(1) != g['k3s_version']:
-        kmsg(g['kname'], f'kopsrox.ini k3s_version ({g["k3s_version"]}) differs from the image '
-             f'({image_k3s_match.group(1)}) - run "image create" to rebuild, then "k3s upgrade" '
-             f'to apply it to the running cluster', 'sys')
-
-    if g['image_config_hash_baked'] and not (verb == 'image' and cmd == 'create') \
-            and g['image_config_hash_baked'] != config_hash(IMAGE_CONFIG_OPTS):
-        kmsg(g['kname'], 'kopsrox.ini image settings ( oci_image, localuser/pass/sshkey, network_dns, '
-             'extra_packages, nfs_* ) changed since the image was built - run "image create" to apply', 'sys')
-
-    if g['cluster_config_hash_baked'] and not (verb == 'cluster' and cmd in ('create', 'update', 'restore')) \
-            and g['cluster_config_hash_baked'] != config_hash(CLUSTER_CONFIG_OPTS):
-        kmsg(g['kname'], 'kopsrox.ini cluster settings ( s3_*, masters, workers, kubelet_args ) changed '
-             'since the cluster was built - run "cluster update" to apply', 'sys')
+    # the detail lives in "config check" - a normal run only points at it
+    if (verb, cmd) not in RESOLVING_CMDS and config_drift():
+        kmsg(g['kname'], 'config drift detected - run "./kopsrox.py config check"', 'sys')
 
     if verb in ['cluster', 'k3s', 'etcd', 'node']:
         for vmid in vms:
@@ -249,44 +308,12 @@ def init(verb: str, cmd: str) -> None:
         # 0.3.24 floor: .22 is the layout the patches anchor on, .23 fixed
         # linked-clone disk format ( the raw fallback corrupts qcow2 ), .24
         # drops the rival guest-agent unit
-        g['microvm_ver'] = subprocess.run(['bash', '-c', "dpkg-query -W -f '${Version}' pve-microvm 2>/dev/null || echo none"], text=True, capture_output=True).stdout.strip()
+        g['microvm_ver'] = microvm_version()
         microvm_ver = g['microvm_ver']
         if microvm_ver == 'none':
             kabort(g['kname'], 'pve-microvm is not installed - see README.md')
-        microvm_installed = tuple(map(int, microvm_ver.split('-')[0].split('.')))
-        if microvm_installed < (0, 3, 24):
+        if tuple(map(int, microvm_ver.split('-')[0].split('.'))) < (0, 3, 24):
             kabort(g['kname'], f'pve-microvm {microvm_ver} is too old - kopsrox needs 0.3.24 or later')
-
-        try:
-            microvm_latest_tag = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
-            if tuple(map(int, microvm_latest_tag.lstrip('v').split('.'))) > microvm_installed:
-                kmsg(g['kname'], f'pve-microvm {microvm_latest_tag} is available ( installed: {microvm_ver} )', 'sys')
-        except Exception:
-            pass
-
-        # same for the guest kernel - unrelated to the proxmox host kernel. upstream
-        # also reconfigures it without bumping DEFAULT_VERSION ( landlock at 0.3.27,
-        # erofs at 0.3.28 ), so compare a hash of the build inputs as well
-        try:
-            kernel_inputs = [requests.get(f'{MICROVM_RAW_URL}/kernel/{f}', timeout=3).content
-                             for f in KERNEL_BUILD_INPUTS]
-            kernel_inputs.append(open(KOPSROX_KERNEL_CONFIG, 'rb').read())
-            kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', kernel_inputs[0].decode()).group(1)
-            kernel_built = kernel_version(g['microvm_kernel'])
-            kernel_id = hashlib.sha256(b''.join(kernel_inputs)).hexdigest()[:16]
-            try:
-                kernel_built_id = open(f'{g["microvm_kernel"]}.id').read().strip()
-            except Exception:
-                kernel_built_id = kernel_id
-
-            if tuple(map(int, kernel_latest.split('.'))) > tuple(map(int, kernel_built.split('.'))):
-                kmsg(g['kname'], f'pve-microvm kernel {kernel_latest} is available ( kopsrox kernel: '
-                     f'{kernel_built} ) - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
-            elif kernel_built_id != kernel_id:
-                kmsg(g['kname'], f'pve-microvm kernel {kernel_latest} config has changed since the kopsrox '
-                     f'kernel was built - run dev/build-kopsrox-kernel.sh, then "image create"', 'sys')
-        except Exception:
-            pass
 
         network_bridge = g['network_bridge']
         if not g['conf_check_master_up']:

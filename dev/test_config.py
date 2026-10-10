@@ -100,4 +100,43 @@ real = '/usr/share/pve-microvm/vmlinuz-kopsrox'
 if os.path.isfile(real):
   assert kernel_version(real)[:1].isdigit(), f'unexpected version from {real}'
 
+# config_drift() - pure given the globals init() sets, so no proxmox needed
+import kopsrox_config
+from kopsrox_config import config_drift, config_hash, IMAGE_CONFIG_OPTS, CLUSTER_CONFIG_OPTS
+
+def drift_globals(**over):
+  base = dict(k3s_version = 'v1.34.1+k3s1', cloud_image_desc = 'k3s_version: v1.34.1+k3s1',
+              oci_image = 'ubuntu:24.04', localuser = 'u', localpass = 'p', localsshkey = 'k',
+              network_dns = '1.1.1.1', extra_packages = '', nfs_server = '', nfs_path = '',
+              s3_endpoint = '', region = '', access_key = '', access_secret = '', bucket = '',
+              masters = 1, workers = 1, kubelet_args = '')
+  vars(kopsrox_config).update(base)
+  vars(kopsrox_config).update(image_config_hash_baked = config_hash(IMAGE_CONFIG_OPTS),
+                              cluster_config_hash_baked = config_hash(CLUSTER_CONFIG_OPTS))
+  vars(kopsrox_config).update(over)
+
+drift_globals()
+assert config_drift() == [], 'matching baselines must report no drift'
+
+drift_globals(k3s_version = 'v1.36.3+k3s1')
+assert len(config_drift()) == 1 and 'k3s_version' in config_drift()[0], config_drift()
+
+drift_globals(extra_packages = 'htop')
+assert len(config_drift()) == 1 and 'image settings' in config_drift()[0], config_drift()
+
+drift_globals(workers = 3)
+assert len(config_drift()) == 1 and 'cluster settings' in config_drift()[0], config_drift()
+
+drift_globals(k3s_version = 'v1.36.3+k3s1', extra_packages = 'htop', workers = 3)
+assert len(config_drift()) == 3, config_drift()
+
+# no baseline recorded - images/clusters built before the hashes existed never warn
+drift_globals(extra_packages = 'htop', workers = 3,
+              image_config_hash_baked = '', cluster_config_hash_baked = '')
+assert config_drift() == [], 'absent baselines must stay silent'
+
+# no image yet ( config check on a fresh install ) - empty description, nothing to compare
+drift_globals(cloud_image_desc = '', image_config_hash_baked = '', cluster_config_hash_baked = '')
+assert config_drift() == [], 'no image must stay silent'
+
 print('config schema tests OK')
