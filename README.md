@@ -183,7 +183,7 @@ Restoring lives under `cluster restore [snapshot]`, not `etcd` — a restore reb
 
 - **utility** — creates a spare "utility" node (`-u1`): fully configured but without k3s installed, useful for testing and debugging.
 - **terminal [hostname]** — connects to the node's serial console via `qm terminal`, with root autologin and no password required (Ctrl-O to exit).
-- **ssh [hostname]** — connects to a node over SSH as the configured user (requires your SSH key in `kopsrox.ini`).
+- **ssh [hostname]** — connects to a node over SSH as the configured user (requires your SSH key in `kopsrox.ini`). Host-key checking is off and nothing is written to your `known_hosts`: kopsrox rebuilds nodes at fixed IPs, so their host keys legitimately change and a recorded key would refuse the next connection after a rebuild. Connections give up after 10s rather than hanging on an unreachable or half-booted node.
 - **reboot [hostname]** — reboots the node via the guest agent and waits for it to come back (microvms reboot in about a second).
 - **destroy [hostname]** — drains, removes, and deletes the node immediately, with no confirmation prompt.
 - **k3s-uninstall [hostname]** — uninstalls k3s from the node, useful for experimenting with reinstalls.

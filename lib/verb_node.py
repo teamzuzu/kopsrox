@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os
+import subprocess
 
 from kopsrox_config import cluster_id, localpass, localuser, network_ip, vmip, vmnames, vms
 from kopsrox_k3s import cluster_info, k3s_forget_node, k3s_init_node, k3s_remove_node
@@ -10,13 +10,18 @@ from kopsrox_proxmox import clone, node_reboot_wait, qa_exec
 
 def node_terminal(vmid: int) -> None:
     kmsg('node_terminal', f'root autologin on console - or u/p: {localuser} / {localpass}', 'sys')
-    os.system(f'sudo qm terminal {vmid}')
-    exit(0)
+    exit(subprocess.call(['sudo', 'qm', 'terminal', str(vmid)]))
 
 
+# nodes are rebuilt at fixed ips so the host key legitimately changes, and
+# StrictHostKeyChecking=no still hard-refuses a CHANGED key - hence /dev/null.
+# ConnectTimeout also bounds the banner exchange, where a half-up sshd hangs forever
 def node_ssh(vmid: int) -> None:
-    os.system(f'ssh -l {localuser} {vmip(vmid)} -o StrictHostKeyChecking=no ')
-    exit(0)
+    exit(subprocess.call(['ssh', '-l', localuser, vmip(vmid),
+                          '-o', 'StrictHostKeyChecking=no',
+                          '-o', 'UserKnownHostsFile=/dev/null',
+                          '-o', 'LogLevel=ERROR',
+                          '-o', 'ConnectTimeout=10']))
 
 
 def node_destroy(vmid: int) -> None:
