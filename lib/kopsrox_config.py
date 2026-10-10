@@ -73,6 +73,10 @@ def config_hash(names) -> str:
 RESOLVING_CMDS = {('image', 'create'), ('cluster', 'create'), ('cluster', 'update'),
                   ('cluster', 'restore'), ('config', 'check')}
 
+# create builds the image, destroy is idempotent and config check validates an
+# ini before the first build - the rest cannot do anything useful without one
+NO_IMAGE_CMDS = {('image', 'create'), ('image', 'destroy'), ('config', 'check')}
+
 
 # each drifted group as a ready-to-print line, [] when clean. an absent baseline
 # is silent, so images / clusters built before the hashes existed never warn
@@ -279,9 +283,8 @@ def init(verb: str, cmd: str) -> None:
     g['vms'] = {vmid: proxmox_node for vmid in sorted(disc_vms)}
     vms = g['vms']
 
-    if verb != 'config' and not (verb == 'image' and cmd == 'create'):
-        if cluster_id not in vms:
-            kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
+    if (verb, cmd) not in NO_IMAGE_CMDS and cluster_id not in vms:
+        kabort(g['kname'], f'{g["cluster_name"]} image not found - please run "kopsrox image create"')
 
     cfg = g['template_conf']
     desc_lines = [unquote(line[1:]) for line in cfg.splitlines() if line.startswith('#')]

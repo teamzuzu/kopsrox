@@ -152,7 +152,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 - **create** — builds a cluster-generic microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). Rebuilds from scratch: any existing VM on `cluster_id` is destroyed first, including one left behind by an interrupted build. Verifies the rootfs, sets the kopsrox kernel, boots the template once to bake in everything that's identical across every node - `k3s_version` (both the master/slave and worker systemd services, ready but not started), the `localuser` account, `network_dns`, `extra_packages`, the kube-vip/traefik manifest, and the `registries.yaml` enabling the embedded registry mirror - then converts the VM to a template on VM ID `cluster_id`. Only genuinely per-node state (static IP, hostname, machine-id, root fs resize) is applied at clone time via the guest agent. Changing any of the values above takes effect on the next `image create`, not on the next node join.
 - **info** — prints the template description (source image, k3s version, creation time) and its storage volume.
-- **destroy** — deletes the image template.
+- **destroy** — deletes the image template. Idempotent: if there is no image it says so and exits 0, so it is safe to run before a rebuild without guarding it.
 
 ### cluster
 

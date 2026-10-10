@@ -32,6 +32,7 @@ from kopsrox_config import (
     pve_run,
     vm_cpu,
     vm_ram,
+    vmnames,
 )
 from kopsrox_kmsg import kabort, kmsg, kplan, kplan_tick, kstep
 from kopsrox_proxmox import prox_destroy, qa_exec, qa_write
@@ -165,8 +166,13 @@ config_hash: {config_hash(IMAGE_CONFIG_OPTS)}'''
     pve_run(['qm', 'set', str(cluster_id), '--description', image_desc, '--tags', f'{cluster_name}'])
     kplan_tick()
 
+# idempotent - a destroy whose target is already gone has done its job. this also
+# skips kopsrox_img(), whose pvesm fallback would be a ~1.4s spawn for nothing
 def image_destroy() -> None:
     kname = 'image_'
+    if cluster_id not in disc_vms:
+        kmsg(f'{kname}destroy', f'{vmnames[cluster_id]} does not exist - nothing to do')
+        return
     kmsg(f'{kname}destroy', f'{kopsrox_img()}/{cloud_image_desc}', 'sys')
     prox_destroy(cluster_id)
 
