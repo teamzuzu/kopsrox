@@ -102,6 +102,19 @@ SCHEMA = [
     opt('s3_bucket', 's3 bucket', 'kopsrox-backup', var = 'bucket', must_change = S3_REQUIRED),
 ]
 
+# an option kopsrox does not know is usually a typo, and configparser just ignores
+# it - so the real option silently keeps its default. reported by "config check"
+def unknown_options(parser: ConfigParser) -> list[str]:
+    known = {entry['name'] for entry in SCHEMA}
+    found = []
+    for section in parser.sections():
+        if section != 'kopsrox':
+            found.append(f'[{section}]')
+            continue
+        found += [name for name in parser.options(section) if name not in known]
+    return sorted(found)
+
+
 def validate(parser: ConfigParser) -> dict:
 
     kname = 'config_check'

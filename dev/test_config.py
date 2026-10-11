@@ -99,6 +99,34 @@ parser = fresh_parser()
 parser.set('kopsrox', 'extra_packages', '')
 assert validate(parser)['extra_packages'] == ''
 
+# unknown_options() - a typo'd option name is otherwise silently ignored, and if
+# it shadows a commented option the real one quietly falls back to its default
+from kopsrox_schema import unknown_options
+
+assert unknown_options(fresh_parser()) == [], 'a clean ini must report nothing'
+
+up = fresh_parser(); up.set('kopsrox', 'not_an_option', '1')
+assert unknown_options(up) == ['not_an_option'], unknown_options(up)
+
+up = fresh_parser(); up.set('kopsrox', 's3_buckett', 'typo')
+assert unknown_options(up) == ['s3_buckett'], unknown_options(up)
+
+# a commented option the user has uncommented is expected, not unknown
+up = fresh_parser(); up.set('kopsrox', 's3_region', 'us-east-1')
+assert unknown_options(up) == [], unknown_options(up)
+
+# every schema name must be recognised, hyphens and all
+up = fresh_parser()
+for entry in SCHEMA:
+  up.set('kopsrox', entry['name'], 'x')
+assert unknown_options(up) == [], unknown_options(up)
+
+up = fresh_parser(); up.add_section('extra')
+assert unknown_options(up) == ['[extra]'], unknown_options(up)
+
+up = fresh_parser(); up.set('kopsrox', 'zzz', '1'); up.set('kopsrox', 'aaa', '1')
+assert unknown_options(up) == ['aaa', 'zzz'], 'sorted for stable output'
+
 # importing kopsrox_config is safe - the proxmox work is all inside init()
 from kopsrox_config import kernel_version
 

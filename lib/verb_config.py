@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import re
+from configparser import ConfigParser
 
+from kopsrox_schema import unknown_options
 from kopsrox_config import (bucket, cluster_id, cluster_name, config_drift, disc_vms, kernel_notice,
                             masterid, microvm_release_notice, proxmox_storage, s3_endpoint, vmnames)
 from kopsrox_kmsg import kmsg
@@ -12,7 +14,16 @@ from kopsrox_proxmox import qa_exec
 def config_check() -> None:
     kname = 'config_'
 
-    kmsg(f'{kname}ini', 'kopsrox.ini valid', 'info')
+    # init() validated every option kopsrox knows about; this is the other
+    # direction - what is in the file that kopsrox does NOT know about
+    parser = ConfigParser()
+    parser.read('kopsrox.ini')
+    unknown = unknown_options(parser)
+    if unknown:
+        kmsg(f'{kname}ini', f'kopsrox.ini has {len(unknown)} unrecognised entry/entries, ignored - '
+             f'check for typos: {", ".join(unknown)}', 'sys')
+    else:
+        kmsg(f'{kname}ini', 'kopsrox.ini valid', 'info')
     kmsg(f'{kname}storage', f'{proxmox_storage} found', 'info')
 
     if cluster_id in disc_vms:

@@ -147,7 +147,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 
 ### config
 
-- **check** — runs the full config checks in one place: validates `kopsrox.ini`, confirms `proxmox_storage` and the image template exist, reports any drift between the ini and what was actually built (k3s version, image settings, cluster settings), and checks upstream for a newer pve-microvm release or guest kernel. Every other command skips all of this and prints at most a one-line `config drift detected` hint, so they stay fast. Works before the first `image create`.
+- **check** — runs the full config checks in one place: validates `kopsrox.ini`, flags any entry in it that kopsrox does not recognise (a misspelt option is otherwise silently ignored, and the real one quietly keeps its default), confirms `proxmox_storage` and the image template exist, reports any drift between the ini and what was actually built (k3s version, image settings, cluster settings), and checks upstream for a newer pve-microvm release or guest kernel. Every other command skips all of this and prints at most a one-line `config drift detected` hint, so they stay fast. Works before the first `image create`.
 
 ### image
 
