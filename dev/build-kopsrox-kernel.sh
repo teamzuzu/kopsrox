@@ -3,8 +3,7 @@
 # fetches pve-microvm's kernel builder + config, merges lib/scripts/kopsrox-kernel.config
 # ( k3s needs vxlan/ipset/xt_* built in - the stock pve-microvm kernel lacks them )
 # installs /usr/share/pve-microvm/vmlinuz-kopsrox + initrd-kopsrox
-# requirements: build-essential flex bison libelf-dev bc libssl-dev wget cpio
-set -e
+set -eo pipefail
 
 UPSTREAM=https://raw.githubusercontent.com/rcarmo/pve-microvm/main
 WORK=/tmp/kopsrox-kernel
@@ -12,6 +11,26 @@ INSTALL_DIR=/usr/share/pve-microvm
 
 # repo root ( script lives in dev/ )
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
+# nothing in the BUILD needs pve-microvm - every input is fetched from upstream -
+# so without this gate the ~10 minute compile runs to completion and only then
+# dies on the install into $INSTALL_DIR, a directory the package owns
+if ! dpkg-query -W -f '${Version}' pve-microvm > /dev/null 2>&1; then
+    echo "pve-microvm is not installed - see README.md" >&2
+    exit 1
+fi
+
+# dpkg rather than command -v: libelf-dev/libssl-dev ship headers, no binary.
+# collect them all - the compile would otherwise fail on one at a time
+missing=
+for pkg in build-essential flex bison libelf-dev bc libssl-dev wget cpio curl; do
+    dpkg-query -W -f '${Version}' "$pkg" > /dev/null 2>&1 || missing="$missing $pkg"
+done
+if [ -n "$missing" ]; then
+    echo "missing build dependencies:$missing" >&2
+    echo "  sudo apt install -y$missing" >&2
+    exit 1
+fi
 
 # build-kernel.sh >= 0.3.27 sources ../tools/pve-microvm-env.sh ( which in turn
 # sources its own lib/project-tmp.sh ), so the checkout layout has to be mirrored
@@ -47,7 +66,8 @@ export PVE_MICROVM_TMP_ROOT=$WORK/pve-microvm
 BUILD_OUT=$PVE_MICROVM_TMP_ROOT/build
 
 # build - initrd lands next to the kernel as initrd-microvm
-./kernel/build-kernel.sh --output $BUILD_OUT/vmlinuz-kopsrox
+./kernel/build-kernel.sh --output $BUILD_OUT/vmlinuz-kopsrox \
+    | grep -v -e 'Install to Proxmox node:' -e 'scp .*root@pve-node'
 
 # install
 sudo install -m 644 $BUILD_OUT/vmlinuz-kopsrox $INSTALL_DIR/vmlinuz-kopsrox
