@@ -110,7 +110,8 @@ def k3s_init_node(vmid: int = masterid, nodetype: str = 'master', snapshot: str 
         kmsg('k3s_restore', f'restoring {vmname} from snapshot {snapshot}', 'sys')
 
         with kstep('k3s_restore', f'resetting etcd from {snapshot}') as step:
-            qa_exec(vmid, 'systemctl stop k3s && rm -rf /var/lib/rancher/')
+            # systemctl stop leaves the containerd shims and their mounts behind
+            qa_exec(vmid, '/usr/local/bin/k3s-killall.sh > /k3s_killall.log 2>&1 && rm -rf /var/lib/rancher/')
 
             # unchecked, a failure here silently boots an empty cluster instead
             rc = qa_exec(vmid, f'/usr/local/bin/k3s server --cluster-reset '
