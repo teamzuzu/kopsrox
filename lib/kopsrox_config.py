@@ -55,7 +55,7 @@ MICROVM_RAW_URL = 'https://raw.githubusercontent.com/rcarmo/pve-microvm/main'
 
 # the exact inputs dev/build-kopsrox-kernel.sh merges, in the order it merges them -
 # both sides hash the same byte stream, so they must stay in step
-KERNEL_BUILD_INPUTS = ('build-kernel.sh', 'pve-microvm-6.12.config', 'pve-microvm-overlay.config')
+KERNEL_BUILD_INPUTS = ('version', 'build-kernel.sh', 'pve-microvm-6.12.config', 'pve-microvm-overlay.config')
 KOPSROX_KERNEL_CONFIG = './lib/scripts/kopsrox-kernel.config'
 
 # ini options that only take effect via a rebuild. a hash of each group is recorded
@@ -118,14 +118,14 @@ def microvm_release_notice(kname: str) -> None:
 
 
 # the guest kernel is unrelated to the proxmox host kernel. upstream also
-# reconfigures it without bumping DEFAULT_VERSION ( landlock at 0.3.27, erofs at
+# reconfigures it without bumping kernel/version ( landlock at 0.3.27, erofs at
 # 0.3.28 ), so compare a hash of the build inputs as well
 def kernel_notice(kname: str) -> None:
     try:
         kernel_inputs = [requests.get(f'{MICROVM_RAW_URL}/kernel/{f}', timeout=3).content
                          for f in KERNEL_BUILD_INPUTS]
         kernel_inputs.append(open(KOPSROX_KERNEL_CONFIG, 'rb').read())
-        kernel_latest = re.search(r'DEFAULT_VERSION="([^"]+)"', kernel_inputs[0].decode()).group(1)
+        kernel_latest = kernel_inputs[0].decode().strip()
         kernel_built = kernel_version(microvm_kernel)
         kernel_id = hashlib.sha256(b''.join(kernel_inputs)).hexdigest()[:16]
         try:

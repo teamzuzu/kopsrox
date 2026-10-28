@@ -63,7 +63,7 @@ def patch_microvm_template() -> str:
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
          '        : # kopsrox: microvm-setup not enabled'),
 
-        ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus"',
+        ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus udev"',
          f'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd{extra_pkgs}"'),
         # with udev installed it would fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
@@ -126,8 +126,10 @@ bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 > kopsrox-image.log 2>&1')
     kplan_tick()
 
+    # upstream kernels enable apparmor by default, and containerd then needs an
+    # apparmor_parser the image does not ship - every pod would fail to start
     local_exec(f'sudo qm set {cluster_id} --args \'-kernel {microvm_kernel} \
--initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0"\'')
+-initrd {microvm_initrd} -append "rdinit=/init console=ttyS0 root=/dev/vda rw ipv6.disable=1 net.ifnames=0 apparmor=0"\'')
     kplan_tick()
 
     with kstep(f'{kname}k3s', f'installing {k3s_version}') as step:

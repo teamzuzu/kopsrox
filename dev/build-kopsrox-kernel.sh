@@ -44,10 +44,10 @@ cd $WORK
 # tun/netfilter/cgroup/landlock/erofs options. the installed package is not a
 # substitute - it ships no pve-microvm-6.12.config, so that merge would silently
 # skip too
-# check-landlock.sh / check-erofs.sh are run against the merged .config and abort
-# the build if upstream's options did not survive olddefconfig
-for f in build-kernel.sh pve-microvm-6.12.config pve-microvm-overlay.config \
-         check-landlock.sh check-erofs.sh; do
+# the check-*.sh scripts are run against the merged .config and abort the build
+# if upstream's options did not survive olddefconfig
+for f in version build-kernel.sh pve-microvm-6.12.config pve-microvm-overlay.config \
+         check-landlock.sh check-erofs.sh check-network.sh check-apparmor.sh; do
     curl -sfL $UPSTREAM/kernel/$f -o kernel/$f
 done
 curl -sfL $UPSTREAM/tools/pve-microvm-env.sh -o tools/pve-microvm-env.sh
@@ -74,10 +74,10 @@ sudo install -m 644 $BUILD_OUT/vmlinuz-kopsrox $INSTALL_DIR/vmlinuz-kopsrox
 sudo install -m 644 $BUILD_OUT/initrd-microvm $INSTALL_DIR/initrd-kopsrox
 
 # fingerprint of what this kernel was built from - kopsrox_config compares it to
-# detect an upstream config change that leaves DEFAULT_VERSION alone. the byte
+# detect an upstream config change that leaves kernel/version alone. the byte
 # stream must match KERNEL_BUILD_INPUTS there ( the fragment is already appended
 # to the overlay by this point )
-cat kernel/build-kernel.sh kernel/pve-microvm-6.12.config kernel/pve-microvm-overlay.config \
+cat kernel/version kernel/build-kernel.sh kernel/pve-microvm-6.12.config kernel/pve-microvm-overlay.config \
     | sha256sum | cut -c1-16 | sudo tee $INSTALL_DIR/vmlinuz-kopsrox.id > /dev/null
 
 echo "installed $INSTALL_DIR/vmlinuz-kopsrox and $INSTALL_DIR/initrd-kopsrox"
