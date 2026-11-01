@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import re
+import shlex
 
 from kopsrox_config import bucket, cluster_name, get_k3s_token, masterid, s3_endpoint, vms
 from kopsrox_kmsg import kabort, kmsg
@@ -69,7 +70,10 @@ def run(cmd: str, arg: str | None = None) -> None:
     snapshots = _etcd_checks(cmd)
 
     if cmd == 'prune':
-        kmsg(f'{kname}-prune', (f'{s3_endpoint}/{bucket}\n' + s3_run(cmd, 'prune --name kopsrox')), 'sys')
+        # K3s matches a name prefix across the shared S3 repository. Include
+        # this cluster's master-node prefix, as save appends the node name.
+        prefix = shlex.quote(f'kopsrox-{cluster_name}-m')
+        kmsg(f'{kname}-prune', (f'{s3_endpoint}/{bucket}\n' + s3_run(cmd, f'prune --name {prefix}')), 'sys')
         exit(0)
 
     if cmd == 'snapshot':
