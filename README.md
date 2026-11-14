@@ -17,7 +17,7 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 ## Requirements
 
 - A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node, and checks this on startup.
-- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. v0.3.29 is the current release and is supported; kopsrox tells you when a newer one is out.
+- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. kopsrox is compatible with [v0.4.2](https://github.com/rcarmo/pve-microvm/releases/tag/v0.4.2) and reports newer releases when you run `./kopsrox.py config check`.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
