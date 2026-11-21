@@ -1,6 +1,7 @@
 # kopsrox
 
 kopsrox is a script to create and manage [k3s](https://k3s.io) clusters on [Proxmox VE](https://www.proxmox.com/). 
+
 the k3s vm nodes are lightweight microvms from the [pve-microvm](https://github.com/rcarmo/pve-microvm) project. 
 
 - Microvms boot in about one second and are built from a plain OCI image (default `ubuntu:26.04`)
@@ -25,10 +26,10 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 
 ## Installation
 
-You need to run kopsrox on a proxmox server - it works through the local `qm`, `pvesm` and `pvesh` commands (via `sudo`) — Run it as root, or as a user with a passwordless sudo entry:
+Create a kopsrox user and make sure they can sudo
 
 ```
-echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/kopsrox
+echo "kopsrox ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/kopsrox
 ```
 
 Install the Python dependencies:
@@ -58,14 +59,11 @@ Run `./kopsrox.py` once and a default `kopsrox.ini` will be generated. Edit it f
 
 | Option | Purpose |
 | --- | --- |
-| `oci_image` | The OCI image nodes are built from. The default `ubuntu:26.04` is well-tested; other apt-based images should work but are untested. |
-| `localuser` / `localpass` / `localsshkey` | The user baked into the image at `image create` time. 
-**`localsshkey` is required** and must be your own key: it is the only way into a node over SSH, so kopsrox refuses to run while it is still the placeholder the generated ini ships with. |
+| `localsshkey` | **required** make sure you have working ssh access |
 | `network_bridge` | The Proxmox bridge nodes attach to. For a Proxmox SDN, give the zone and vnet as `sdn/<zone>/<vnet>`. The image template is built on this bridge too, so it must have internet access. |
 | `network_mtu` | Applied inside each node. Set to 1450 when using a Proxmox SDN network. |
 | `nfs_server` / `nfs_path` | Optional. Set both to add an `nfs` storage class backed by an external NFS server, alongside the default local-path. Baked into the image, so changing them needs an `image create`. |
-| `kubelet_args` | Optional. Comma-separated kubelet arguments applied to every node (for example `max-pods=250`). Takes effect on the next node join — no `image create` needed. |
-| `s3_*` | **Required.** S3-compatible credentials for etcd snapshots. Works with Cloudflare R2, Backblaze B2, MinIO, and similar providers. `s3_region` is optional; the rest must be real values — kopsrox refuses to run while they are still the placeholders the generated ini ships with. |
+| `s3_*` | **required** `s3_region` is optional; the rest must be real values — kopsrox refuses to run while they are still the placeholders the generated ini ships with. |
 
 ### VM ID and IP layout
 
@@ -98,19 +96,21 @@ produces this layout:
 
 With `kopsrox.ini` configured, a cluster is three commands away.
 
-**Build the image.** Builds a microvm template from the configured OCI image with k3s already baked in (takes a few minutes — watch `kopsrox-image.log` if curious):
+**Build the image** Builds a microvm template from the configured OCI image with k3s already baked in (takes a few minutes — watch `kopsrox-image.log` if curious):
 
 ```
 ./kopsrox.py image create
 ```
 
-**Create the cluster.** Clones the template into master and worker nodes, installs k3s, and exports `<cluster_name>.kubeconfig` and `<cluster_name>.k3stoken` to the current directory. Around 2.5 minutes for 1 master and 1 worker:
+**Create the cluster** 
+
+Creates the -m1 master server, exports `<cluster_name>.kubeconfig` and `<cluster_name>.k3stoken` 
 
 ```
 ./kopsrox.py cluster create
 ```
 
-**Use it:**
+**Use it**
 
 ```
 ./kopsrox.py cluster info
@@ -118,14 +118,13 @@ With `kopsrox.ini` configured, a cluster is three commands away.
 kubectl --kubeconfig=<cluster_name>.kubeconfig get nodes
 ```
 
-**Scale it.** 
+**Scale it** 
 
 Edit `kopsrox.ini` — for example, set `workers = 3` or `masters = 3`— then:
 
 ```
 ./kopsrox.py cluster update
 ```
-
 
 **Back it up** 
 
@@ -155,30 +154,40 @@ Rebuilds the whole cluster from the latest S3 snapshot, even if every node is go
 
 ### image
 
-- **create** — builds a cluster-specifc microvm template from the OCI image set in `kopsrox.ini`, using a patched copy of [pve-microvm-template](https://github.com/rcarmo/pve-microvm) (log in `kopsrox-image.log`). 
+- **create** — builds a cluster-specifc microvm template from the OCI image set in `kopsrox.ini`
 
 ### cluster
 
 - **create** — creates a fresh cluster: clones the template into master (and worker) nodes per `kopsrox.ini`, . Safe to re-run — if a working master already exists, it behaves like `cluster update`.
   
 - **update** — reconciles the running cluster against `masters` / `workers` in `kopsrox.ini`, adding or draining and removing nodes as needed.
+  
 - **info** — lists VM IDs, hostnames, IPs, and which Proxmox host each node runs on, plus `kubectl get nodes`. Shows which node currently holds the VIP.
+  
 - **restore [snapshot]** — rebuilds the whole cluster from an S3 etcd snapshot, even if all nodes are gone. Restores the master, then reconciles the rest per `kopsrox.ini`. With no argument it uses the latest snapshot; pass a name (from `etcd list`) to restore a specific one.
+
 - **exec [command]** — runs a command on every node via the guest agent.
+
 - **destroy** — destroys the cluster immediately, with no confirmation prompt. Workers are drained and removed first, then masters. The image template and utility node are left alone.
 
 ### k3s
 
 - **export-token** — exports the cluster's k3s token to `<cluster_name>.k3stoken`. Required for restores; keep it safe.
+
 - **kubeconfig** — exports the kubeconfig to `<cluster_name>.kubeconfig`, patched to point at the VIP instead of `127.0.0.1`.
+
 - **check-config** — runs `k3s check-config` on the master and prints the output. The kopsrox kernel exposes `/proc/config.gz`, so this runs fully.
+
 - **kubectl [cmd]** — runs kubectl on the master via the guest agent, for example: `./kopsrox.py k3s kubectl get events -A`.
+
 - **reload-kubevip** — restarts the kube-vip daemonset.
 
 ### etcd
 
 - **snapshot** — takes an etcd snapshot and uploads it to the configured S3 storage.
+
 - **list** — lists this cluster's S3 snapshots with creation times and sizes in MB. Alias `etcd ls`.
+
 - **prune** — deletes old snapshots according to the retention policy.
 
 ### node
