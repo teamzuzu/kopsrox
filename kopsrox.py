@@ -53,12 +53,16 @@ cmds = {
 }
 
 verbs = list(cmds)
+aliases = {('etc', 'ls'): ('etcd', 'list')}
 
 def verbs_help():
     kmsg('kopsrox_usage', '[verb] [command]')
     print('verbs:')
     for kverb in verbs:
         print(f'- {kverb}')
+    print('aliases:')
+    for (alias_verb, alias_cmd), (target_verb, target_cmd) in aliases.items():
+        print(f'- {alias_verb} {alias_cmd} -> {target_verb} {target_cmd}')
 
 def cmds_help(verb):
     kmsg(f'kopsrox_{verb}', '[command]')
@@ -74,15 +78,16 @@ if len(sys.argv) < 2:
     verbs_help()
     exit(0)
 verb = sys.argv[1]
+cmd = sys.argv[2] if len(sys.argv) >= 3 else None
+verb, cmd = aliases.get((verb, cmd), (verb, cmd))
 
 if verb not in verbs:
     verbs_help()
     exit(1)
 
-if len(sys.argv) < 3:
+if cmd is None:
     cmds_help(verb)
     exit(0)
-cmd = sys.argv[2]
 
 if cmd not in cmds[verb]:
     cmds_help(verb)

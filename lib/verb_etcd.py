@@ -23,19 +23,27 @@ def s3_run(cmd: str, s3cmd: str) -> str:
 
 
 def list_snapshots(cmd: str) -> str:
+    snapshots = []
 
-    ls = s3_run(cmd, 'ls').split('\n')
+    for line in sorted(s3_run(cmd, 'ls').splitlines()):
+        fields = line.split()
+        if len(fields) != 4:
+            continue
 
-    images = ''
+        name, location, size, created = fields
+        if name.startswith(f'kopsrox-{cluster_name}-') and location.startswith('s3://'):
+            size_bytes = int(size)
+            size_mb = '<0.01 MB' if 0 < size_bytes < 10_000 else f'{size_bytes / 1_000_000:,.2f} MB'
+            snapshots.append((name, created, size_mb))
 
-    for line in sorted(ls):
-
-        s3_file = line.split()[0]
-
-        if re.search(f'kopsrox-{cluster_name}', s3_file) and re.search('s3', line):
-            images += f'{s3_file} - {line.split()[3]}\n'
-
-    return images.strip()
+    columns = [('Snapshot', 'Created', 'Size'), *snapshots]
+    name_width = max(len(name) for name, _, _ in columns)
+    created_width = max(len(created) for _, created, _ in columns)
+    size_width = max(len(size) for _, _, size in columns)
+    return '\n'.join(
+        f'{name:<{name_width}}  {created:<{created_width}}  {size:>{size_width}}'
+        for name, created, size in columns
+    )
 
 
 def s3_list(cmd: str, snapshots: str) -> None:

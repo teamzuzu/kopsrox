@@ -175,7 +175,7 @@ With 3 masters, the Kubernetes API remains available even if the node holding th
 ### etcd
 
 - **snapshot** — takes an etcd snapshot and uploads it to the configured S3 storage.
-- **list** — lists this cluster's snapshots in S3.
+- **list** — lists this cluster's S3 snapshots with creation times and sizes in MB. Alias `etc ls`.
 - **prune** — deletes old snapshots according to the retention policy.
 
 Restoring lives under `cluster restore [snapshot]`, not `etcd` — a restore rebuilds every node, not just the datastore.
