@@ -166,6 +166,19 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+with patch.object(kopsrox_config.requests, 'get') as get, patch.object(kopsrox_config, 'kmsg') as log:
+  release = {'tag_name': 'v0.4.3', 'assets': [{'name': 'pve-microvm_0.4.3-1_all.deb'}]}
+  get.return_value.json.return_value = release
+  with patch.object(kopsrox_config, 'microvm_version', return_value='0.4.3-1'):
+    kopsrox_config.microvm_release_notice('config_microvm')
+    log.assert_called_with('config_microvm', 'pve-microvm 0.4.3-1 installed ( latest: 0.4.3-1 )', 'info')
+    release['assets'][0]['name'] = 'pve-microvm_0.4.3-2_all.deb'
+    kopsrox_config.microvm_release_notice('config_microvm')
+    log.assert_called_with('config_microvm', 'pve-microvm 0.4.3-1 installed ( latest: 0.4.3-2 )', 'sys')
+    release['assets'].clear()
+    kopsrox_config.microvm_release_notice('config_microvm')
+    log.assert_called_with('config_microvm', 'pve-microvm 0.4.3-1 installed ( latest release: v0.4.3 )', 'info')
+
 with TemporaryDirectory() as directory:
   kernel = Path(directory) / 'guest-kernel'
   initrd = Path(directory) / 'guest-initrd'

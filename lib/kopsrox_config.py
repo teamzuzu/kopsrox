@@ -110,11 +110,20 @@ def microvm_version() -> str:
 def microvm_release_notice(kname: str) -> None:
     installed = microvm_version()
     try:
-        latest = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()['tag_name']
+        release = requests.get('https://api.github.com/repos/rcarmo/pve-microvm/releases/latest', timeout=3).json()
+        tag = release['tag_name']
+        latest = next((match[1] for asset in release.get('assets', [])
+                       if (match := re.fullmatch(r'pve-microvm_([^_]+)_all\.deb', asset['name']))), None)
     except Exception:
         return
-    sev = 'sys' if tuple(map(int, latest.lstrip('v').split('.'))) > tuple(map(int, installed.split('-')[0].split('.'))) else 'info'
-    kmsg(kname, f'pve-microvm {installed} installed ( latest: {latest} )', sev)
+    if installed == 'none':
+        kmsg(kname, f'pve-microvm is not installed ( latest: {latest or tag} )', 'sys')
+        return
+
+    newer = subprocess.run(['dpkg', '--compare-versions', latest or tag.removeprefix('v'), 'gt', installed],
+                           capture_output=True).returncode == 0
+    available = f'latest: {latest}' if latest else f'latest release: {tag}'
+    kmsg(kname, f'pve-microvm {installed} installed ( {available} )', 'sys' if newer else 'info')
 
 
 def missing_kernel_files() -> str:
