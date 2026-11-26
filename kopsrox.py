@@ -53,16 +53,16 @@ cmds = {
 }
 
 verbs = list(cmds)
-aliases = {('etc', 'ls'): ('etcd', 'list')}
+aliases = {('etcd', 'ls'): ('etcd', 'list')}
 
 def verbs_help():
     kmsg('kopsrox_usage', '[verb] [command]')
     print('verbs:')
     for kverb in verbs:
         print(f'- {kverb}')
-    print('aliases:')
-    for (alias_verb, alias_cmd), (target_verb, target_cmd) in aliases.items():
-        print(f'- {alias_verb} {alias_cmd} -> {target_verb} {target_cmd}')
+#    print('aliases:')
+#    for (alias_verb, alias_cmd), (target_verb, target_cmd) in aliases.items():
+#        print(f'- {alias_verb} {alias_cmd} -> {target_verb} {target_cmd}')
 
 def cmds_help(verb):
     kmsg(f'kopsrox_{verb}', '[command]')
