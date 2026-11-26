@@ -118,8 +118,9 @@ def image_create() -> None:
     if not os.path.isfile('/usr/share/pve-microvm/vmlinuz'):
         kabort(f'{kname}check', 'pve-microvm not installed - see https://github.com/rcarmo/pve-microvm')
 
-    if not (os.path.isfile(microvm_kernel) and os.path.isfile(microvm_initrd)):
-        kabort(f'{kname}check', f'{microvm_kernel} not found - run dev/build-kopsrox-kernel.sh')
+    missing = kopsrox_config.missing_kernel_files()
+    if missing:
+        kabort(f'{kname}check', missing)
 
     get_k3s_path = './lib/scripts/k3s.sh'
     if not os.path.isfile(get_k3s_path):

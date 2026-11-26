@@ -162,6 +162,36 @@ if os.path.isfile(real):
 # config_drift() - pure given the globals init() sets, so no proxmox needed
 import kopsrox_config
 from kopsrox_config import config_drift, config_hash, IMAGE_CONFIG_OPTS, CLUSTER_CONFIG_OPTS
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+with TemporaryDirectory() as directory:
+  kernel = Path(directory) / 'guest-kernel'
+  initrd = Path(directory) / 'guest-initrd'
+  with patch.multiple(kopsrox_config, create=True, microvm_kernel=str(kernel), microvm_initrd=str(initrd)):
+    with patch.object(kopsrox_config.requests, 'get') as get, patch.object(kopsrox_config, 'kmsg') as log:
+      kopsrox_config.kernel_notice('config_kernel')
+      message = log.call_args.args[1]
+      assert str(kernel) in message and str(initrd) in message
+      assert './dev/build-kopsrox-kernel.sh' in message
+
+      kernel.write_bytes(fake_bzimage('6.12.99'))
+      kopsrox_config.kernel_notice('config_kernel')
+      message = log.call_args.args[1]
+      assert str(initrd) in message and str(kernel) not in message
+
+      initrd.touch()
+      kernel.write_bytes(b'not a kernel')
+      kopsrox_config.kernel_notice('config_kernel')
+      assert 'cannot read the guest kernel version' in log.call_args.args[1]
+      get.assert_not_called()
+
+      kernel.write_bytes(fake_bzimage('6.12.99'))
+      get.return_value.content = b'not a version'
+      log.reset_mock()
+      kopsrox_config.kernel_notice('config_kernel')
+      log.assert_not_called()
 
 def drift_globals(**over):
   base = dict(k3s_version = 'v1.34.1+k3s1', cloud_image_desc = 'k3s_version: v1.34.1+k3s1',

@@ -117,16 +117,39 @@ def microvm_release_notice(kname: str) -> None:
     kmsg(kname, f'pve-microvm {installed} installed ( latest: {latest} )', sev)
 
 
+def missing_kernel_files() -> str:
+    missing = [f'{option} ({path})' for option, path in
+               (('microvm_kernel', microvm_kernel), ('microvm_initrd', microvm_initrd))
+               if not os.path.isfile(path)]
+    if not missing:
+        return ''
+    return (f'missing guest boot files: {", ".join(missing)}. '
+            'Run ./dev/build-kopsrox-kernel.sh from the repository on this Proxmox host, '
+            'or point kopsrox.ini at an existing kopsrox kernel and initrd.')
+
+
 # the guest kernel is unrelated to the proxmox host kernel. upstream also
 # reconfigures it without bumping kernel/version ( landlock at 0.3.27, erofs at
 # 0.3.28 ), so compare a hash of the build inputs as well
 def kernel_notice(kname: str) -> None:
+    missing = missing_kernel_files()
+    if missing:
+        kmsg(kname, missing, 'sys')
+        return
+
+    kernel_built = kernel_version(microvm_kernel)
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', kernel_built):
+        kmsg(kname, f'cannot read the guest kernel version from {microvm_kernel}. '
+             'Check microvm_kernel in kopsrox.ini or run ./dev/build-kopsrox-kernel.sh.', 'sys')
+        return
+
     try:
         kernel_inputs = [requests.get(f'{MICROVM_RAW_URL}/kernel/{f}', timeout=3).content
                          for f in KERNEL_BUILD_INPUTS]
         kernel_inputs.append(open(KOPSROX_KERNEL_CONFIG, 'rb').read())
         kernel_latest = kernel_inputs[0].decode().strip()
-        kernel_built = kernel_version(microvm_kernel)
+        if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', kernel_latest):
+            return
         kernel_id = hashlib.sha256(b''.join(kernel_inputs)).hexdigest()[:16]
         try:
             kernel_built_id = open(f'{microvm_kernel}.id').read().strip()
