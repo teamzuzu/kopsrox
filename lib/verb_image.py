@@ -6,6 +6,7 @@ from datetime import datetime
 
 import requests
 
+import kopsrox_config
 from kopsrox_artifacts import k3s_config, k3s_registries, kopsrox_manifest
 from kopsrox_config import (
     IMAGE_CONFIG_OPTS,
@@ -52,6 +53,11 @@ def patch_microvm_template() -> str:
         packages.append('nfs-common')
     extra_pkgs = (' ' + ' '.join(packages)) if packages else ''
 
+    with open('/usr/bin/pve-microvm-template') as source:
+        template_script = source.read()
+    base_pkgs = 'systemd systemd-sysv ca-certificates curl dbus'
+    udev = ' udev' if f'PKGS="iproute2 isc-dhcp-client {base_pkgs} udev"' in template_script else ''
+
     # ( old, new ) - each must match or upstream changed and we bail
     patches = [
         # upstream uses the host's dns, which the guest may not reach. rm -f
@@ -63,8 +69,8 @@ def patch_microvm_template() -> str:
             "$ROOTFS_DIR/etc/systemd/system/multi-user.target.wants/microvm-setup.service"''',
          '        : # kopsrox: microvm-setup not enabled'),
 
-        ('PKGS="iproute2 isc-dhcp-client systemd systemd-sysv ca-certificates curl dbus udev"',
-         f'PKGS="iproute2 systemd systemd-sysv ca-certificates curl dbus udev sudo systemd-timesyncd{extra_pkgs}"'),
+        (f'PKGS="iproute2 isc-dhcp-client {base_pkgs}{udev}"',
+         f'PKGS="iproute2 {base_pkgs}{udev} sudo systemd-timesyncd{extra_pkgs}"'),
         # with udev installed it would fight microvm-console for ttyS0
         ('systemctl enable serial-getty@ttyS0.service 2>/dev/null || true',
          'systemctl mask serial-getty@ttyS0.service 2>/dev/null || true'),
@@ -72,11 +78,21 @@ def patch_microvm_template() -> str:
          'log "Converting to template..."\n: # kopsrox: template conversion deferred to image_create()'),
     ]
 
-    template_script = open('/usr/bin/pve-microvm-template').read()
     for old, new in patches:
         if old not in template_script:
             kabort(f'{kname}patch', f'pve-microvm-template patch failed - upstream changed?\n{old}')
         template_script = template_script.replace(old, new)
+
+    # Newer Proxmox plugins classify VM disks as vm-vol.
+    template_script = template_script.replace(
+        "unless $type eq 'images' && defined($owner) && $owner == $vmid;",
+        "unless ($type eq 'images' || $type eq 'vm-vol') && defined($owner) && $owner == $vmid;")
+
+    # Preserve the unit's quotes and systemd dollar escapes through bash -c "...".
+    template_script = re.sub(
+        r'''^ExecStart=/bin/sh -c '\. /etc/microvm-static-net .*printf "\[Match\].*$''',
+        lambda match: match[0].replace('"', r'\"').replace('$', r'\$'),
+        template_script, flags=re.MULTILINE)
 
     patched_path = './lib/scripts/microvm-template.sh'
     open(patched_path, 'w').write(template_script)
@@ -86,6 +102,16 @@ def patch_microvm_template() -> str:
 
 def image_create() -> None:
     kname = 'image_'
+
+    current_config = kopsrox_config.template_conf.split('\n[', 1)[0]
+    if cluster_id in disc_vms and not re.search(r'^template:[ \t]*1[ \t]*$', current_config, re.MULTILINE):
+        kabort(f'{kname}check',
+               f'VM {cluster_id} occupies the image template ID. '
+               'It may be left over from a failed image build.\n'
+               f'Inspect it with sudo qm config {cluster_id} and sudo qm status {cluster_id}.\n'
+               f'If you confirm it is safe to remove, shut it down if running with '
+               f'sudo qm shutdown {cluster_id}, then run sudo qm destroy {cluster_id}.\n'
+               'Retry ./kopsrox.py image create after removing the VM.')
 
     kplan(7, f'creating {cluster_name}-i0 / {oci_image}')
 
@@ -109,12 +135,12 @@ def image_create() -> None:
     open('./lib/manifests/registries.yaml', 'w').write(k3s_registries())
 
 
-    # pve-microvm >= 0.3.25 refuses --refresh on a vmid that is not a stopped
-    # template, which is exactly what a half finished build leaves behind
-    if cluster_id in disc_vms:
+    microvm_template = patch_microvm_template()
+    # v0.4.3 checks storage before removing an existing template.
+    microvm_version = tuple(map(int, kopsrox_config.microvm_ver.split('-')[0].split('.')))
+    if microvm_version < (0, 4, 3) and cluster_id in disc_vms:
         prox_destroy(cluster_id)
 
-    microvm_template = patch_microvm_template()
     with kstep(f'{kname}template', f'creating {cluster_name} template') as step:
         # pve-microvm >= 0.3.27 resolves its scratch root to /tmp, which is tmpfs
         # on a stock pve node - the extracted rootfs plus the raw/qcow2 disk would
@@ -123,7 +149,7 @@ def image_create() -> None:
 bash {microvm_template} --image {oci_image} --vmid {cluster_id} \
 --name {cluster_name}-i0 --storage {proxmox_storage} --disk-size 4G --memory {vm_ram * 1024} \
 --cores {vm_cpu} --bridge {network_bridge} --refresh --profile standard --no-docker \
-> kopsrox-image.log 2>&1')
+> kopsrox-image.log 2>&1 || {{ tail -n 30 kopsrox-image.log >&2; exit 1; }}')
     kplan_tick()
 
     # upstream kernels enable apparmor by default, and containerd then needs an

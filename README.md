@@ -18,7 +18,7 @@ latest release: https://github.com/teamzuzu/kopsrox/releases
 ## Requirements
 
 - A Proxmox VE host with root access, or a user that can `sudo` without a password — kopsrox runs directly on the Proxmox node, and checks this on startup.
-- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. kopsrox is compatible with [v0.4.2](https://github.com/rcarmo/pve-microvm/releases/tag/v0.4.2) and reports newer releases when you run `./kopsrox.py config check`.
+- [pve-microvm](https://github.com/rcarmo/pve-microvm) v0.3.24 or later, installed on the node. kopsrox supports [v0.4.3](https://github.com/rcarmo/pve-microvm/releases/tag/v0.4.3) and reports newer releases when you run `./kopsrox.py config check`.
 - A network with internet access, configured in Proxmox as a bridge or a Proxmox SDN network.
 - A range of 10 free VM IDs (for example, 600–610).
 - A range of 10 free IPs on that network (for example, 192.168.0.160–192.168.0.170).
@@ -44,6 +44,10 @@ Install pve-microvm — see the [pve-microvm installation docs](https://github.c
 curl -sLO $(curl -s https://api.github.com/repos/rcarmo/pve-microvm/releases/latest | grep browser_download_url | grep '.deb' | cut -d'"' -f4)
 sudo dpkg -i pve-microvm_*.deb
 ```
+
+With pve-microvm v0.4.3 or later, `image create` lets upstream validate that `proxmox_storage` is enabled, active on this node, and supports VM disks before replacing a stopped template. The v0.4.3 storage changes apply to future image builds and require no guest restart or kernel rebuild.
+
+If a failed build leaves a regular VM at the template ID, `image create` stops and prints the recovery commands. Check `kopsrox-image.log` and inspect the VM with `sudo qm config <vmid>` and `sudo qm status <vmid>`. Once you confirm it is safe to remove, shut it down if running with `sudo qm shutdown <vmid>`, then remove it with `sudo qm destroy <vmid>` and retry `image create`.
 
 Build the kopsrox microvm kernel. This is a one-time step — the stock pve-microvm kernel is missing features k3s requires, such as VXLAN and veth:
 
